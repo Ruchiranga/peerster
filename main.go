@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dedis/protobuf"
+	"log"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type SimpleMessage struct {
@@ -22,19 +24,17 @@ type GossipPacket struct {
 
 type Gossiper struct {
 	gossipAddressStr string
-	gossipAddress * net.UDPAddr
-	gossipConn * net.UDPConn
+	gossipConn * net.PacketConn
+	uiListener * net.Listener
 	uiPort string
 	Name string
 	Peers []string
-	sendChan chan GossipPacket
-	receiveChan chan GossipPacket
 }
 
 func (gossiper *Gossiper) rememberPeer(address string) {
-	if address == gossiper.gossipAddress.String() {
-		return
-	}
+	//if address == gossiper.gossipAddress.String() {
+	//	return
+	//}
 	for _, str := range gossiper.Peers {
 		if str == address {
 			return
@@ -43,24 +43,34 @@ func (gossiper *Gossiper) rememberPeer(address string) {
 	gossiper.Peers = append(gossiper.Peers, address)
 }
 
+func (gossiper *Gossiper) listenGossip(wg * sync.WaitGroup) {
 
-func (gossiper *Gossiper) listenGossip() {
-	defer gossiper.gossipConn.Close()
-	var packet GossipPacket
+	defer (*gossiper.gossipConn).Close()
+	defer wg.Done()
+
 	for {
-		packetBytes := make([]byte, 4096)
-		gossiper.gossipConn.ReadFromUDP(packetBytes)
-		protobuf.Decode(packetBytes, &packet)
+		var packet GossipPacket
+		buf := make([]byte, 4096)
+		_, _, err := (*gossiper.gossipConn).ReadFrom(buf)
+		//n, addr, err := (*gossiper.gossipConn).ReadFrom(buf)
+		if err != nil {
+			log.Fatal(err)
+			fmt.Println("Continuing to receive UDP despite of error...")
+			continue
+		}
+		protobuf.Decode(buf, &packet)
 		gossiper.rememberPeer(packet.Simple.RelayPeerAddr)
 
 		fmt.Printf("SIMPLE MESSAGE origin %s from %s contents %s\n", packet.Simple.OriginalName, packet.Simple.RelayPeerAddr, packet.Simple.Contents)
 		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
 
-		gossiper.receiveChan <- packet
+		go gossiper.broadcast(packet)
 	}
 }
 
-func (gossiper *Gossiper) listenUi() {
+func (gossiper *Gossiper) listenUi(wg * sync.WaitGroup) {
+	defer wg.Done()
+
 	handler := http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
 		decoder := json.NewDecoder(r.Body)
 		var packet GossipPacket
@@ -71,7 +81,7 @@ func (gossiper *Gossiper) listenUi() {
 		fmt.Printf("CLIENT MESSAGE %s\n", packet.Simple.Contents)
 		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
 
-		gossiper.receiveChan <- packet
+		go gossiper.broadcast(packet)
 	})
 
 	err := http.ListenAndServe(fmt.Sprintf(":%s", gossiper.uiPort), handler)
@@ -80,46 +90,24 @@ func (gossiper *Gossiper) listenUi() {
 	}
 }
 
-//func (gossiper *Gossiper) broadcastOnce(packet GossipPacket) {
-//
-//	relayPeerAddress := packet.Simple.RelayPeerAddr
-//	packet.Simple.RelayPeerAddr = gossiper.gossipAddressStr
-//	for _, peerAddress := range gossiper.Peers {
-//		if peerAddress != relayPeerAddress {
-//			destinationAddress, _ := net.ResolveUDPAddr("udp", peerAddress)
-//
-//			packetBytes, err := protobuf.Encode(&packet)
-//			if err != nil {
-//				panic(err)
-//			}
-//			if packet.Simple.RelayPeerAddr == gossiper.gossipAddressStr {
-//				fmt.Println(packet.Simple.RelayPeerAddr == gossiper.gossipAddressStr, packet.Simple.RelayPeerAddr, gossiper.gossipAddressStr)
-//				gossiper.gossipConn.WriteToUDP(packetBytes, destinationAddress)
-//			}
-//		}
-//	}
-//
-//}
 
-func (gossiper *Gossiper) broadcast() {
-	for {
-		packet := <- gossiper.sendChan
-		relayPeerAddress := packet.Simple.RelayPeerAddr
-		packet.Simple.RelayPeerAddr = gossiper.gossipAddressStr
-		for _, peerAddress := range gossiper.Peers {
-			if peerAddress != relayPeerAddress {
-				destinationAddress, _ := net.ResolveUDPAddr("udp", peerAddress)
+func (gossiper *Gossiper) broadcast(packet GossipPacket) {
+	if packet.Simple.OriginalName == "" {
+		packet.Simple.OriginalName = gossiper.Name
+	}
+	senderAddress := packet.Simple.RelayPeerAddr
+	packet.Simple.RelayPeerAddr = gossiper.gossipAddressStr
+	for _, address := range gossiper.Peers {
+		if address != senderAddress {
+			dst, err := net.ResolveUDPAddr("udp", address)
+			if err != nil {
+				panic(err)
+			}
 
-				packetBytes, err := protobuf.Encode(&packet)
-				if err != nil {
-					panic(err)
-				}
-				if packet.Simple.RelayPeerAddr == gossiper.gossipAddressStr {
-					fmt.Println(packet.Simple.RelayPeerAddr == gossiper.gossipAddressStr, packet.Simple.RelayPeerAddr, gossiper.gossipAddressStr)
-
-					gossiper.gossipConn.WriteToUDP(packetBytes, destinationAddress)
-
-				}
+			buf, err := protobuf.Encode(&packet)
+			_, err = (*gossiper.gossipConn).WriteTo(buf, dst)
+			if err != nil {
+				panic(err)
 			}
 		}
 	}
@@ -140,42 +128,35 @@ func main() {
 
 	gossiper := NewGossiper(*gossipAddress, *name, peersList, *uiPort)
 
-	go gossiper.listenUi()
-	go gossiper.listenGossip()
-	go gossiper.broadcast()
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	for {
-		packet := <-gossiper.receiveChan
+	go gossiper.listenUi(&wg)
+	go gossiper.listenGossip(&wg)
 
-		if packet.Simple.RelayPeerAddr == "" && packet.Simple.OriginalName == "" {
-			packet.Simple.OriginalName = *name
-		}
-
-		gossiper.sendChan <- packet
-	}
-
+	wg.Wait()
 	fmt.Println(*simple)
 }
 
 func NewGossiper(address, name string, peers []string, uiPort string) *Gossiper {
-	udpAddr, err := net.ResolveUDPAddr("udp4", address)
-	udpConn, err := net.ListenUDP("udp4", udpAddr)
+	port := strings.Split(address, ":")[1]
+	udpConn, errUdp := net.ListenPacket("udp", fmt.Sprintf(":%s", port))
 
-	if err != nil {
-		panic(err)
+	tcpL, errTcp := net.Listen("tcp", fmt.Sprintf("localhost:%s", uiPort)) // localhost or gossiper IP?
+
+	if errUdp != nil {
+		panic(errUdp)
 	}
-
-	sendChan := make(chan GossipPacket, 5)
-	receiveChan := make(chan GossipPacket, 5)
+	if errTcp != nil {
+		panic(errTcp)
+	}
 
 	return &Gossiper{
 		gossipAddressStr: address,
-		gossipAddress: udpAddr,
-		gossipConn: udpConn,
+		gossipConn: &udpConn,
+		uiListener: &tcpL,
 		Name: name,
 		Peers: peers,
 		uiPort: uiPort,
-		sendChan: sendChan,
-		receiveChan: receiveChan,
 	}
 }
