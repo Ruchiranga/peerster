@@ -51,6 +51,7 @@ type Gossiper struct {
 	Peers         []string
 	ackAwaitList  AckAwaitList
 	messagesMap   MessagesMap
+	randGen       *rand.Rand
 }
 
 type MessagesMap struct {
@@ -93,12 +94,14 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 		protobuf.Decode(packetBytes, &packet)
 		gossiper.rememberPeer(relayPeer.String())
 
-		fmt.Printf("SIMPLE MESSAGE origin %s from %s contents %s\n", packet.Simple.OriginalName, packet.Simple.RelayPeerAddr, packet.Simple.Contents)
-		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
-
 		if gossiper.simple {
+			fmt.Printf("SIMPLE MESSAGE origin %s from %s contents %s\n", packet.Simple.OriginalName, packet.Simple.RelayPeerAddr, packet.Simple.Contents)
+			fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
+
 			go gossiper.broadcast(packet)
 		} else {
+			fmt.Printf("RUMOUR origin %s from %s ID %d contents %s\n", packet.Rumour.Origin, relayPeer.String(), packet.Rumour.ID, packet.Rumour.Text)
+
 			go gossiper.handleGossip(packet, relayPeer.String())
 		}
 
@@ -116,6 +119,10 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 			go gossiper.rumourMonger(*packet.Rumour)
 		}
 	} else if packet.Status != nil {
+		fmt.Printf("STATUS from %s peer %s nextID %d peer %s nextID %d etc",
+			relayPeer, packet.Status.Want[0].Identifier, packet.Status.Want[0].NextId, packet.Status.Want[1].Identifier,
+			packet.Status.Want[1].NextId)
+
 		gossiper.ackAwaitList.RLock()
 		if gossiper.ackAwaitList.ackChans[relayPeer] != nil {
 			gossiper.ackAwaitList.ackChans[relayPeer] <- *packet.Status
@@ -134,15 +141,19 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 	rumourToMonger := rumour
 	lastMongeredWithIdx := -1
-	outer : for {
 
+	flippedCoin := false
+	outer : for {
 		var randomPeerIdx int
-		for {
-			randomPeerIdx = rand.Intn(len(gossiper.Peers))
-			if randomPeerIdx != lastMongeredWithIdx {
-				break
+
+		inner : for {
+			randomPeerIdx = gossiper.randGen.Intn(len(gossiper.Peers))
+			if len(gossiper.Peers) == 1 || randomPeerIdx != lastMongeredWithIdx {
+				break inner
 			}
 		}
+
+
 		randomPeerAddress := gossiper.Peers[randomPeerIdx]
 
 		peerAckChan := make(chan StatusPacket, 1)
@@ -152,7 +163,13 @@ func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 		gossiper.ackAwaitList.Unlock()
 
 		gossipPacket := GossipPacket{Rumour: &rumourToMonger}
+
+		if flippedCoin {
+			fmt.Printf("FLIPPED COIN sending rumor to %s", randomPeerAddress)
+			flippedCoin = false
+		}
 		go gossiper.broadcastToAddr(gossipPacket, randomPeerAddress)
+
 
 		lastMongeredWithIdx = randomPeerIdx
 
@@ -163,7 +180,7 @@ func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 				nextMessage := gossiper.getNextMsgToSend(ackStatus.Want)
 				if nextMessage.Rumour != nil {
 					rumourToMonger = *nextMessage.Rumour
-					continue
+					continue outer
 				} else if nextMessage.Status != nil {
 					go gossiper.broadcastToAddr(nextMessage, randomPeerAddress)
 					break outer
@@ -178,12 +195,13 @@ func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 
 		ticker.Stop()
 
-		i := rand.Int() % 2
+		i := gossiper.randGen.Int() % 2
 
 		if i == 0 {
-			break
+			break outer
 		} else {
-			continue
+			flippedCoin = true
+			continue outer
 		}
 	}
 }
@@ -243,10 +261,6 @@ func (gossiper *Gossiper) isRumourNews(rumour *RumourMessage) (news bool) {
 	return
 }
 
-func (gossiper *Gossiper) addPeer(address string) {
-	// append a nil item to the end of the ackchans aswell
-}
-
 func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -283,91 +297,6 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 		panic(err)
 	}
 }
-
-//
-//func (gossiper * Gossiper) handleRumour(packet GossipPacket, relayPeer string) {
-//
-//	// Acknowledge and send them back status if relayPeer != "", i.e not a client rumour
-//	if relayPeer != "" && packet.Rumour.Origin != "" {
-//		gossiper.updateWantList(*packet.Rumour)
-//		status := StatusPacket{ Want : gossiper.wantList}
-//		gossipPacket := GossipPacket{Status: &status}
-//
-//		go gossiper.broadcastToAddr(gossipPacket, relayPeer)
-//	} else {
-//		packet.Rumour.Origin = gossiper.Name
-//		//TODO: set the correct seq number to the rumour ****************************
-//	}
-//
-//	// Send packet to a random peer
-//	for {
-//		peerIdx := rand.Intn(len(gossiper.Peers))
-//
-//		peerAckChan := make(chan bool, 5)
-//		// Assuming peers and ackChans arrays are parallel
-//		chanIdx := -1
-//		for idx, peer := range gossiper.Peers {
-//			if peer == relayPeer {
-//				chanIdx = idx
-//				peerAckChan = gossiper.ackChans[idx]
-//				break
-//			}
-//		}
-//
-//		go gossiper.broadcastToAddr(packet, gossiper.Peers[peerIdx])
-//
-//		ticker := time.NewTicker(time.Second)
-//
-//		select {
-//			case <- peerAckChan:
-//			case <- ticker.C:
-//		}
-//
-//		gossiper.ackChans[chanIdx] = nil
-//
-//		ticker.Stop()
-//
-//		i := rand.Int() % 2
-//
-//		if i == 0 {
-//			break
-//		} else {
-//			continue
-//		}
-//	}
-//}
-//
-//func (gossiper *Gossiper) updateWantList(rumour RumourMessage) (news bool) {
-//	for idx, peerStatus := range gossiper.wantList {
-//		if peerStatus.Identifier == rumour.Origin {
-//			if peerStatus.NextId == rumour.ID {
-//				gossiper.wantList[idx].NextId += 1
-//				return true
-//			}
-//			// If the rumour ID is ahead of what we want, ok to discard it?
-//			return false
-//		}
-//	}
-//	newPeerStatus := PeerStatus{Identifier: rumour.Origin, NextId: 1}
-//	gossiper.wantList = append(gossiper.wantList, newPeerStatus)
-//	return true
-//}
-
-//func (gossiper * Gossiper) handleStatus(packet GossipPacket, relayPeer string) {
-//	for idx, peer := range gossiper.Peers {
-//		if peer == relayPeer && gossiper.ackChans[idx] != nil {
-//			gossiper.ackChans[idx] <- true
-//			break
-//		}
-//	}
-//
-//	peerWant := packet.Status.Want
-//	messageToSend := gossiper.getNextMsgToSend(peerWant)
-//
-//	packetToSend := GossipPacket{Rumour: &messageToSend}
-//	go gossiper.broadcastToAddr(packetToSend, relayPeer)
-//
-//}
 
 func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip GossipPacket) {
 	gossip = GossipPacket{}
@@ -420,6 +349,10 @@ func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip Gossi
 }
 
 func (gossiper *Gossiper) broadcastToAddr(packet GossipPacket, address string) {
+	if packet.Rumour != nil {
+		fmt.Printf("MONGERING with %s", address)
+	}
+
 	destinationAddress, _ := net.ResolveUDPAddr("udp", address)
 
 	packetBytes, err := protobuf.Encode(&packet)
@@ -489,6 +422,9 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 	messagesMap := MessagesMap{messages: make(map[string][]RumourMessage)}
 	ackWaitList := AckAwaitList{ackChans: make(map[string]chan StatusPacket)}
 
+	randSource := rand.NewSource(0)
+	randGen := rand.New(randSource)
+
 	return &Gossiper{
 		gossipAddress: udpAddr,
 		gossipConn:    udpConn,
@@ -498,5 +434,6 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 		simple:        simple,
 		ackAwaitList:  ackWaitList,
 		messagesMap:   messagesMap,
+		randGen:       randGen,
 	}
 }
