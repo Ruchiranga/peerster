@@ -100,8 +100,6 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 
 			go gossiper.broadcast(packet)
 		} else {
-			fmt.Printf("RUMOUR origin %s from %s ID %d contents %s\n", packet.Rumour.Origin, relayPeer.String(), packet.Rumour.ID, packet.Rumour.Text)
-
 			go gossiper.handleGossip(packet, relayPeer.String())
 		}
 
@@ -110,18 +108,23 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 
 func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 	if packet.Rumour != nil {
+		fmt.Printf("RUMOUR origin %s from %s ID %d contents %s\n", packet.Rumour.Origin, relayPeer,
+			packet.Rumour.ID, packet.Rumour.Text)
+
 		rumour := packet.Rumour
 
 		if gossiper.isRumourNews(rumour) {
 			gossiper.storeMessage(rumour)
 			statusPacket := gossiper.generateStatusPacket()
-			gossiper.broadcastToAddr(GossipPacket{Status: &statusPacket}, relayPeer)
+			go gossiper.broadcastToAddr(GossipPacket{Status: &statusPacket}, relayPeer)
 			go gossiper.rumourMonger(*packet.Rumour)
 		}
 	} else if packet.Status != nil {
-		fmt.Printf("STATUS from %s peer %s nextID %d peer %s nextID %d etc",
-			relayPeer, packet.Status.Want[0].Identifier, packet.Status.Want[0].NextId, packet.Status.Want[1].Identifier,
-			packet.Status.Want[1].NextId)
+		statusStr := fmt.Sprintf("STATUS from %s", relayPeer)
+		for _, peerStatus := range packet.Status.Want {
+			statusStr += fmt.Sprintf(" peer %s nextID %d", peerStatus.Identifier, peerStatus.NextId);
+		}
+		fmt.Println(statusStr)
 
 		gossiper.ackAwaitList.RLock()
 		if gossiper.ackAwaitList.ackChans[relayPeer] != nil {
@@ -148,6 +151,7 @@ func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 
 		inner : for {
 			randomPeerIdx = gossiper.randGen.Intn(len(gossiper.Peers))
+			//if len(gossiper.Peers) == 1 || gossiper.Peers[randomPeerIdx] != fromPeerAddress  {
 			if len(gossiper.Peers) == 1 || randomPeerIdx != lastMongeredWithIdx {
 				break inner
 			}
@@ -165,7 +169,7 @@ func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 		gossipPacket := GossipPacket{Rumour: &rumourToMonger}
 
 		if flippedCoin {
-			fmt.Printf("FLIPPED COIN sending rumor to %s", randomPeerAddress)
+			fmt.Printf("FLIPPED COIN sending rumor to %s\n", randomPeerAddress)
 			flippedCoin = false
 		}
 		go gossiper.broadcastToAddr(gossipPacket, randomPeerAddress)
@@ -223,10 +227,10 @@ func (gossiper *Gossiper) generateStatusPacket() (statusPacket StatusPacket) {
 
 func getNextWantId(messages []RumourMessage) (nextId uint32) {
 	nextId = uint32(len(messages) + 1)
-	var idx uint32
+	var idx int
 	for idx = range messages {
-		if messages[idx].ID != idx+1 {
-			nextId = idx + 1
+		if messages[idx].ID != uint32(idx + 1) {
+			nextId = uint32(idx + 1)
 			break
 		}
 	}
@@ -271,7 +275,11 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("CLIENT MESSAGE %s\n", packet.Simple.Contents)
+		if packet.Rumour != nil {
+			fmt.Printf("CLIENT MESSAGE %s\n", packet.Rumour.Text)
+		} else {
+			fmt.Printf("CLIENT MESSAGE %s\n", packet.Simple.Contents)
+		}
 		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
 
 		// Assuming client is not able to send Status messages
@@ -350,7 +358,7 @@ func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip Gossi
 
 func (gossiper *Gossiper) broadcastToAddr(packet GossipPacket, address string) {
 	if packet.Rumour != nil {
-		fmt.Printf("MONGERING with %s", address)
+		fmt.Printf("MONGERING with %s\n", address)
 	}
 
 	destinationAddress, _ := net.ResolveUDPAddr("udp", address)

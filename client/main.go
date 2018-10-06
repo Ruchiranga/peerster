@@ -14,10 +14,11 @@ func main() {
 	flag.Parse()
 
 	url := fmt.Sprintf("%s:%s","http://localhost", *uiPort)
-	content := fmt.Sprintf(`{"simple": {"contents": "%s"}}`, *message)
+	//contentSimple := fmt.Sprintf(`{"simple": {"contents": "%s"}}`, *message)
+	contentRumour := fmt.Sprintf(`{"rumour": {"text": "%s"}}`, *message)
 
 	//fmt.Printf("URL: %s Message: %s", url, content)
 
-	var jsonStr = []byte(content)
+	var jsonStr = []byte(contentRumour)
 	http.Post(url, "application/json", bytes.NewBuffer(jsonStr))
 }
