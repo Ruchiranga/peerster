@@ -16,20 +16,20 @@ import (
 )
 
 type SimpleMessage struct {
-	OriginalName string
+	OriginalName  string
 	RelayPeerAddr string
-	Contents string
+	Contents      string
 }
 
 type RumourMessage struct {
 	Origin string
-	ID uint32
-	Text string
+	ID     uint32
+	Text   string
 }
 
 type PeerStatus struct {
 	Identifier string
-	NextId uint32
+	NextId     uint32
 }
 
 type StatusPacket struct {
@@ -37,20 +37,20 @@ type StatusPacket struct {
 }
 
 type GossipPacket struct {
-	Simple * SimpleMessage
-	Rumour * RumourMessage
-	Status * StatusPacket
+	Simple *SimpleMessage
+	Rumour *RumourMessage
+	Status *StatusPacket
 }
 
 type Gossiper struct {
-	gossipAddress * net.UDPAddr
-	gossipConn * net.UDPConn
-	uiPort string
-	Name string
-	simple bool
-	Peers []string
-	ackAwaitList AckAwaitList
-	messagesMap MessagesMap
+	gossipAddress *net.UDPAddr
+	gossipConn    *net.UDPConn
+	uiPort        string
+	Name          string
+	simple        bool
+	Peers         []string
+	ackAwaitList  AckAwaitList
+	messagesMap   MessagesMap
 }
 
 type MessagesMap struct {
@@ -63,7 +63,7 @@ type AckAwaitList struct {
 	ackChans map[string]chan StatusPacket
 }
 
-func (gossiper * Gossiper) rememberPeer(address string) {
+func (gossiper *Gossiper) rememberPeer(address string) {
 	if address == gossiper.gossipAddress.String() { // Being resilient to other nodes that might have bugs
 		return
 	}
@@ -75,7 +75,7 @@ func (gossiper * Gossiper) rememberPeer(address string) {
 	gossiper.Peers = append(gossiper.Peers, address)
 }
 
-func (gossiper * Gossiper) listenGossip(wg *sync.WaitGroup) {
+func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 	defer gossiper.gossipConn.Close()
 	defer wg.Done()
 
@@ -102,11 +102,10 @@ func (gossiper * Gossiper) listenGossip(wg *sync.WaitGroup) {
 			go gossiper.handleGossip(packet, relayPeer.String())
 		}
 
-
 	}
 }
 
-func (gossiper * Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
+func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 	if packet.Rumour != nil {
 		rumour := packet.Rumour
 
@@ -114,7 +113,7 @@ func (gossiper * Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 			gossiper.storeMessage(rumour)
 			statusPacket := gossiper.generateStatusPacket()
 			gossiper.broadcastToAddr(GossipPacket{Status: &statusPacket}, relayPeer)
-			go gossiper.rumourMonger(packet)
+			go gossiper.rumourMonger(*packet.Rumour)
 		}
 	} else if packet.Status != nil {
 		gossiper.ackAwaitList.RLock()
@@ -124,13 +123,69 @@ func (gossiper * Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 			// anti-entropy case
 			// check vectors and send status or news I have
 		}
+		gossiper.ackAwaitList.RUnlock() // TODO: Unlock here or in the if?
+
 	} else {
 		log.Fatal("Unexpected gossipe packet type.")
 	}
 }
 
-func (gossiper * Gossiper) rumourMonger(gossip GossipPacket) {
 
+func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
+	rumourToMonger := rumour
+	lastMongeredWithIdx := -1
+	outer : for {
+
+		var randomPeerIdx int
+		for {
+			randomPeerIdx = rand.Intn(len(gossiper.Peers))
+			if randomPeerIdx != lastMongeredWithIdx {
+				break
+			}
+		}
+		randomPeerAddress := gossiper.Peers[randomPeerIdx]
+
+		peerAckChan := make(chan StatusPacket, 1)
+		// Assuming peers and ackChans arrays are parallel
+		gossiper.ackAwaitList.Lock()
+		gossiper.ackAwaitList.ackChans[randomPeerAddress] = peerAckChan
+		gossiper.ackAwaitList.Unlock()
+
+		gossipPacket := GossipPacket{Rumour: &rumourToMonger}
+		go gossiper.broadcastToAddr(gossipPacket, randomPeerAddress)
+
+		lastMongeredWithIdx = randomPeerIdx
+
+		ticker := time.NewTicker(time.Second)
+
+		select {
+			case ackStatus := <- peerAckChan:
+				nextMessage := gossiper.getNextMsgToSend(ackStatus.Want)
+				if nextMessage.Rumour != nil {
+					rumourToMonger = *nextMessage.Rumour
+					continue
+				} else if nextMessage.Status != nil {
+					go gossiper.broadcastToAddr(nextMessage, randomPeerAddress)
+					break outer
+				}
+			case <-ticker.C:
+		}
+
+		gossiper.ackAwaitList.Lock()
+		close(gossiper.ackAwaitList.ackChans[randomPeerAddress])
+		gossiper.ackAwaitList.ackChans[randomPeerAddress] = nil
+		gossiper.ackAwaitList.Unlock()
+
+		ticker.Stop()
+
+		i := rand.Int() % 2
+
+		if i == 0 {
+			break
+		} else {
+			continue
+		}
+	}
 }
 
 func (gossiper *Gossiper) generateStatusPacket() (statusPacket StatusPacket) {
@@ -140,14 +195,7 @@ func (gossiper *Gossiper) generateStatusPacket() (statusPacket StatusPacket) {
 
 	wantList := []PeerStatus{}
 	for peer, messages := range messageMap {
-		nextId := uint32(len(messages) + 1)
-		var idx uint32
-		for idx = range messages {
-			if messages[idx].ID != idx + 1 {
-				nextId = idx + 1
-				break
-			}
-		}
+		nextId := getNextWantId(messages)
 		wantList = append(wantList, PeerStatus{Identifier: peer, NextId: nextId})
 	}
 
@@ -155,11 +203,19 @@ func (gossiper *Gossiper) generateStatusPacket() (statusPacket StatusPacket) {
 	return
 }
 
-func (gossiper * Gossiper) sendStatus(status StatusPacket, address string) {
-
+func getNextWantId(messages []RumourMessage) (nextId uint32) {
+	nextId = uint32(len(messages) + 1)
+	var idx uint32
+	for idx = range messages {
+		if messages[idx].ID != idx+1 {
+			nextId = idx + 1
+			break
+		}
+	}
+	return
 }
 
-func (gossiper * Gossiper) storeMessage(rumour * RumourMessage) {
+func (gossiper *Gossiper) storeMessage(rumour *RumourMessage) {
 	gossiper.messagesMap.RLock()
 	messageList := gossiper.messagesMap.messages[rumour.Origin]
 	gossiper.messagesMap.RUnlock()
@@ -174,7 +230,7 @@ func (gossiper * Gossiper) storeMessage(rumour * RumourMessage) {
 	gossiper.messagesMap.Unlock()
 }
 
-func (gossiper * Gossiper) isRumourNews(rumour * RumourMessage) (news bool){
+func (gossiper *Gossiper) isRumourNews(rumour *RumourMessage) (news bool) {
 	news = true
 	gossiper.messagesMap.RLock()
 	for _, message := range gossiper.messagesMap.messages[rumour.Origin] {
@@ -187,19 +243,14 @@ func (gossiper * Gossiper) isRumourNews(rumour * RumourMessage) (news bool){
 	return
 }
 
-func rumourMonger(rumour RumourMessage) {
-
-}
-
-func (gossiper * Gossiper) addPeer (address string) {
+func (gossiper *Gossiper) addPeer(address string) {
 	// append a nil item to the end of the ackchans aswell
-
 }
 
-func (gossiper * Gossiper) listenUi(wg *sync.WaitGroup) {
+func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	handler := http.HandlerFunc(func (w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		decoder := json.NewDecoder(r.Body)
 		var packet GossipPacket
 		err := decoder.Decode(&packet)
@@ -211,7 +262,17 @@ func (gossiper * Gossiper) listenUi(wg *sync.WaitGroup) {
 
 		// Assuming client is not able to send Status messages
 		if packet.Rumour != nil {
-			go gossiper.handleRumour(packet, "")
+			gossiper.messagesMap.RLock()
+			messages := gossiper.messagesMap.messages[gossiper.Name]
+			gossiper.messagesMap.RUnlock()
+
+			nextId := getNextWantId(messages)
+
+			packet.Rumour.ID = nextId
+			packet.Rumour.Origin = gossiper.Name
+
+			gossiper.storeMessage(packet.Rumour)
+			go gossiper.rumourMonger(*packet.Rumour)
 		} else { // SimpleMessage
 			go gossiper.broadcast(packet)
 		}
@@ -222,6 +283,7 @@ func (gossiper * Gossiper) listenUi(wg *sync.WaitGroup) {
 		panic(err)
 	}
 }
+
 //
 //func (gossiper * Gossiper) handleRumour(packet GossipPacket, relayPeer string) {
 //
@@ -274,22 +336,22 @@ func (gossiper * Gossiper) listenUi(wg *sync.WaitGroup) {
 //		}
 //	}
 //}
-
-func (gossiper * Gossiper) updateWantList(rumour RumourMessage) (news bool){
-	for idx, peerStatus := range gossiper.wantList {
-		if peerStatus.Identifier == rumour.Origin {
-			if peerStatus.NextId == rumour.ID {
-				gossiper.wantList[idx].NextId += 1
-				return true
-			}
-			// If the rumour ID is ahead of what we want, ok to discard it?
-			return false
-		}
-	}
-	newPeerStatus := PeerStatus{ Identifier: rumour.Origin, NextId: 1}
-	gossiper.wantList = append(gossiper.wantList, newPeerStatus)
-	return true
-}
+//
+//func (gossiper *Gossiper) updateWantList(rumour RumourMessage) (news bool) {
+//	for idx, peerStatus := range gossiper.wantList {
+//		if peerStatus.Identifier == rumour.Origin {
+//			if peerStatus.NextId == rumour.ID {
+//				gossiper.wantList[idx].NextId += 1
+//				return true
+//			}
+//			// If the rumour ID is ahead of what we want, ok to discard it?
+//			return false
+//		}
+//	}
+//	newPeerStatus := PeerStatus{Identifier: rumour.Origin, NextId: 1}
+//	gossiper.wantList = append(gossiper.wantList, newPeerStatus)
+//	return true
+//}
 
 //func (gossiper * Gossiper) handleStatus(packet GossipPacket, relayPeer string) {
 //	for idx, peer := range gossiper.Peers {
@@ -307,35 +369,57 @@ func (gossiper * Gossiper) updateWantList(rumour RumourMessage) (news bool){
 //
 //}
 
-func (gossiper * Gossiper) getNextMsgToSend(peerWants []PeerStatus) (message RumourMessage) {
-	for _, peerStatus := range peerWants {
-		wantNext := peerStatus.NextId
-		wantOrigin := peerStatus.Identifier
+func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip GossipPacket) {
+	gossip = GossipPacket{}
 
-		// TODO: avoid this sort by adding messages to the array in the right order
-		gossiper.messagesMap.Lock()
-		sort.Slice(gossiper.messagesMap.messages[wantOrigin], func(i, j int) bool {
-			return gossiper.messagesMap.messages[wantOrigin][i].ID < gossiper.messagesMap.messages[wantOrigin][j].ID
-		})
-		gossiper.messagesMap.Unlock()
+	// Check for any news I have
+	gossiper.messagesMap.RLock()
 
-		gossiper.messagesMap.RLock()
-		wantedOriginMessageList := gossiper.messagesMap.messages[wantOrigin]
-		gossiper.messagesMap.RUnlock()
-		if wantedOriginMessageList != nil {
-			for _, message := range wantedOriginMessageList {
-				if message.ID >= wantNext {
-					return message
+	outer : for origin := range gossiper.messagesMap.messages {
+		if len(gossiper.messagesMap.messages[origin]) > 0 {
+			for _, peerStatus := range peerWants {
+				if peerStatus.Identifier == origin {
+					peerWant := peerStatus.NextId
+					// TODO: simplify with getNextWantId()?
+					for _, message := range gossiper.messagesMap.messages[origin] {
+						if message.ID >= peerWant {
+							gossip = GossipPacket{Rumour: &message}
+							gossiper.messagesMap.RUnlock()
+							return
+						}
+					}
+					continue outer
 				}
 			}
-		} else {
-			continue
+			gossip = GossipPacket{Rumour: &gossiper.messagesMap.messages[origin][0]}
+			gossiper.messagesMap.RUnlock()
+			return
 		}
 	}
-	return nil
+
+	// Execution coming here means I have no news to send. So check if peer has news
+
+	for _, peerStatus := range peerWants {
+		if peerStatus.NextId == 1 {
+			continue
+		}
+
+		peerId := peerStatus.Identifier
+		if getNextWantId(gossiper.messagesMap.messages[peerId]) < peerStatus.NextId {
+			statusPacket := gossiper.generateStatusPacket()
+			gossip = GossipPacket{Status: &statusPacket}
+			gossiper.messagesMap.RUnlock()
+			return
+		}
+
+	}
+
+	// Execution coming here means neither of us have news.
+	gossiper.messagesMap.RUnlock()
+	return
 }
 
-func (gossiper * Gossiper) broadcastToAddr(packet GossipPacket, address string) {
+func (gossiper *Gossiper) broadcastToAddr(packet GossipPacket, address string) {
 	destinationAddress, _ := net.ResolveUDPAddr("udp", address)
 
 	packetBytes, err := protobuf.Encode(&packet)
@@ -346,7 +430,7 @@ func (gossiper * Gossiper) broadcastToAddr(packet GossipPacket, address string) 
 	gossiper.gossipConn.WriteToUDP(packetBytes, destinationAddress)
 }
 
-func (gossiper * Gossiper) broadcast(packet GossipPacket) {
+func (gossiper *Gossiper) broadcast(packet GossipPacket) {
 	if packet.Simple.OriginalName == "" {
 		packet.Simple.OriginalName = gossiper.Name
 	}
@@ -403,16 +487,16 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 	}
 
 	messagesMap := MessagesMap{messages: make(map[string][]RumourMessage)}
-	ackWaitList := AckAwaitList{ ackChans: make(map[string]chan StatusPacket)}
+	ackWaitList := AckAwaitList{ackChans: make(map[string]chan StatusPacket)}
 
 	return &Gossiper{
 		gossipAddress: udpAddr,
-		gossipConn: udpConn,
-		Name: name,
-		Peers: peers,
-		uiPort: uiPort,
-		simple: simple,
-		ackAwaitList: ackWaitList,
-		messagesMap: messagesMap,
+		gossipConn:    udpConn,
+		Name:          name,
+		Peers:         peers,
+		uiPort:        uiPort,
+		simple:        simple,
+		ackAwaitList:  ackWaitList,
+		messagesMap:   messagesMap,
 	}
 }
