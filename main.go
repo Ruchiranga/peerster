@@ -52,6 +52,7 @@ type Gossiper struct {
 	ackAwaitList  AckAwaitList
 	messagesMap   MessagesMap
 	randGen       *rand.Rand
+	debug         bool
 }
 
 type MessagesMap struct {
@@ -110,6 +111,8 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 	if packet.Rumour != nil {
 		fmt.Printf("RUMOUR origin %s from %s ID %d contents %s\n", packet.Rumour.Origin, relayPeer,
 			packet.Rumour.ID, packet.Rumour.Text)
+		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
+
 
 		rumour := packet.Rumour
 
@@ -118,6 +121,8 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 			statusPacket := gossiper.generateStatusPacket()
 			go gossiper.broadcastToAddr(GossipPacket{Status: &statusPacket}, relayPeer)
 			go gossiper.rumourMonger(*packet.Rumour)
+		} else if gossiper.debug{
+			fmt.Printf("__________Rumour %s is not news. So ignoring\n", packet.Rumour.Text)
 		}
 	} else if packet.Status != nil {
 		statusStr := fmt.Sprintf("STATUS from %s", relayPeer)
@@ -125,9 +130,14 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 			statusStr += fmt.Sprintf(" peer %s nextID %d", peerStatus.Identifier, peerStatus.NextId);
 		}
 		fmt.Println(statusStr)
+		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
+
 
 		gossiper.ackAwaitList.RLock()
 		if gossiper.ackAwaitList.ackChans[relayPeer] != nil {
+			if gossiper.debug {
+				fmt.Printf("__________Writing status from %s to ack channel\n", relayPeer)
+			}
 			gossiper.ackAwaitList.ackChans[relayPeer] <- *packet.Status
 		} else {
 			// anti-entropy case
@@ -151,6 +161,9 @@ func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 
 		inner : for {
 			randomPeerIdx = gossiper.randGen.Intn(len(gossiper.Peers))
+			if gossiper.debug {
+				fmt.Printf("__________Generated random idx %d for rumourmongering\n", randomPeerIdx)
+			}
 			//if len(gossiper.Peers) == 1 || gossiper.Peers[randomPeerIdx] != fromPeerAddress  {
 			if len(gossiper.Peers) == 1 || randomPeerIdx != lastMongeredWithIdx {
 				break inner
@@ -180,14 +193,20 @@ func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 		ticker := time.NewTicker(time.Second)
 
 		select {
-			case ackStatus := <- peerAckChan:
-				nextMessage := gossiper.getNextMsgToSend(ackStatus.Want)
-				if nextMessage.Rumour != nil {
-					rumourToMonger = *nextMessage.Rumour
-					continue outer
-				} else if nextMessage.Status != nil {
-					go gossiper.broadcastToAddr(nextMessage, randomPeerAddress)
-					break outer
+			case ackStatus := <- peerAckChan: {
+					if gossiper.debug {
+						fmt.Printf("__________Received status having wants of length %d from channel\n", len(ackStatus.Want))
+					}
+					nextMessage := gossiper.getNextMsgToSend(ackStatus.Want)
+					if nextMessage.Rumour != nil {
+						rumourToMonger = *nextMessage.Rumour
+						continue outer
+					} else if nextMessage.Status != nil {
+						go gossiper.broadcastToAddr(nextMessage, randomPeerAddress)
+						break outer
+					} else {
+						fmt.Printf("IN SYNC WITH %s\n", randomPeerAddress)
+					}
 				}
 			case <-ticker.C:
 		}
@@ -199,11 +218,21 @@ func (gossiper *Gossiper) rumourMonger(rumour RumourMessage) {
 
 		ticker.Stop()
 
-		i := gossiper.randGen.Int() % 2
+		randomValue := gossiper.randGen.Int()
+		if gossiper.debug {
+			fmt.Printf("__________Generated random value %d for fipping coin\n", randomValue)
+		}
+		i := randomValue % 2
 
 		if i == 0 {
+			if gossiper.debug {
+				fmt.Println("__________Flipped coin but got Tails :(")
+			}
 			break outer
 		} else {
+			if gossiper.debug {
+				fmt.Println("__________Flipped coin and got Heads ^_^")
+			}
 			flippedCoin = true
 			continue outer
 		}
@@ -393,6 +422,8 @@ func (gossiper *Gossiper) broadcast(packet GossipPacket) {
 }
 
 func main() {
+	DEBUG := false
+
 	uiPort := flag.String("UIPort", "8080", "Port for the UI client")
 	gossipAddress := flag.String("gossipAddr", "127.0.0.1:5000", "ip:port for the gossiper")
 	name := flag.String("name", "node-ruchiranga", "Name of the gossiper")
@@ -404,7 +435,7 @@ func main() {
 
 	peersList := strings.Split(*peersString, ",")
 
-	gossiper := NewGossiper(*gossipAddress, *name, peersList, *uiPort, *simple)
+	gossiper := NewGossiper(*gossipAddress, *name, peersList, *uiPort, *simple, DEBUG)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -417,7 +448,7 @@ func main() {
 	fmt.Println(*simple)
 }
 
-func NewGossiper(address, name string, peers []string, uiPort string, simple bool) *Gossiper {
+func NewGossiper(address, name string, peers []string, uiPort string, simple bool, debug bool) *Gossiper {
 	udpAddr, addrErr := net.ResolveUDPAddr("udp4", address)
 	if addrErr != nil {
 		panic(addrErr)
@@ -430,7 +461,7 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 	messagesMap := MessagesMap{messages: make(map[string][]RumourMessage)}
 	ackWaitList := AckAwaitList{ackChans: make(map[string]chan StatusPacket)}
 
-	randSource := rand.NewSource(0)
+	randSource := rand.NewSource(time.Now().UTC().UnixNano())
 	randGen := rand.New(randSource)
 
 	return &Gossiper{
@@ -443,5 +474,6 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 		ackAwaitList:  ackWaitList,
 		messagesMap:   messagesMap,
 		randGen:       randGen,
+		debug:         debug,
 	}
 }
