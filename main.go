@@ -136,11 +136,16 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 
 
 		gossiper.ackAwaitList.RLock()
-		if gossiper.ackAwaitList.ackChans[relayPeer] != nil { // If the status is an ack
+		ackChan := gossiper.ackAwaitList.ackChans[relayPeer]
+		gossiper.ackAwaitList.RUnlock()
+
+		if ackChan != nil { // If the status is an ack
 			if gossiper.debug {
 				fmt.Printf("__________Writing status from %s to ack channel\n", relayPeer)
 			}
+			gossiper.ackAwaitList.RLock()
 			gossiper.ackAwaitList.ackChans[relayPeer] <- *packet.Status
+			gossiper.ackAwaitList.RUnlock()
 		} else { // If the status is from anti-entropy
 			if gossiper.debug {
 				fmt.Printf("__________Processing anti-entropy status from %s\n", relayPeer)
@@ -165,7 +170,6 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 				fmt.Printf("IN SYNC WITH %s\n", relayPeer)
 			}
 		}
-		gossiper.ackAwaitList.RUnlock() // TODO: Unlock here or in the if?
 
 	} else {
 		log.Fatal("Unexpected gossip packet type.")
