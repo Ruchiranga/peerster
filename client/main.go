@@ -13,7 +13,7 @@ func main() {
 
 	flag.Parse()
 
-	url := fmt.Sprintf("%s:%s","http://localhost", *uiPort)
+	url := fmt.Sprintf("%s:%s/message","http://localhost", *uiPort)
 	//contentSimple := fmt.Sprintf(`{"simple": {"contents": "%s"}}`, *message)
 	contentRumour := fmt.Sprintf(`{"rumor": {"text": "%s"}}`, *message)
 

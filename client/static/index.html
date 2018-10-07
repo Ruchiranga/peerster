@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css" integrity="sha384-rHyoN1iRsVXV4nD0JutlnGaslCJuC7uwjduW9SVrLvRYooPp2bWYgmgJQIXwl/Sp" crossorigin="anonymous">
+    <link rel="stylesheet" href="style.css">
+
+    <title>Peerster Client</title>
+</head>
+<body>
+
+<div class="container-fluid">
+    <div class="row">
+        <div id="id-box" class="col">
+            <div class="well" id="id-box-well">
+                Node ID:
+                <b id="id-placeholder"></b>
+            </div>
+        </div>
+    </div>
+    <div class="row">
+        <div id="chat-box" class="col-lg-8">
+            <div class="row" id="chat-history-row">
+                <div class="panel panel-default">
+                    <div class="panel-heading">Chat history</div>
+                    <div id="chat-msgs-list" class="panel-body"></div>
+                </div>
+            </div>
+            <div class="row vertical-align" id="chat-input-row">
+                <div class="col-lg-10" id="textarea-col">
+                    <textarea id="send-message-txtarea" class="form-control" placeholder="Enter your message and hit Send!" rows="2" cols="65"></textarea>
+                </div>
+                <div class="col-lg-2">
+                    <button id="send-msg-btn" type="submit" class="btn btn-default btn-lg btn-block pull-right" onclick="onClickMessageSend()">Send</button>
+                </div>
+            </div>
+        </div>
+        <div id="node-box" class="col-lg-4">
+            <div class="row">
+                <div class="panel panel-default">
+                    <div class="panel-heading">Peer Nodes</div>
+                    <div class="panel-body">
+                        <ul id="nodes-list" class="list-group">
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="row" id="node-input-row">
+                <div class="col-lg-10" id="textarea-col">
+                    <input id="send-node-txt" type="text" class="form-control" placeholder="Enter peer address in the form <ip:port> and hit Add!">
+                </div>
+                <div class="col-lg-2">
+                    <button id="send-msg-btn" type="submit" class="btn btn-default btn-md btn-block pull-right" onclick="onClickNodeSend()">Add</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.11/lodash.min.js"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
+<script src="index.js"></script>
+</body>
+</html>

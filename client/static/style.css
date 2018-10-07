@@ -1,0 +1,28 @@
+textarea {
+    resize: none;
+}
+
+.vertical-align {
+    display: flex;
+    align-items: center;
+}
+
+.row {
+    padding: 10px;
+}
+
+.col {
+    padding: 10px;
+}
+
+.panel {
+    margin-bottom: 0;
+}
+
+#textarea-col {
+    padding: 0;
+}
+
+#chat-input-row, #node-input-row {
+    padding-top: 0;
+}

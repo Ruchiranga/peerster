@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dedis/protobuf"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
@@ -328,39 +329,105 @@ func (gossiper *Gossiper) isRumorNews(rumour *RumorMessage) (news bool) {
 func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		decoder := json.NewDecoder(r.Body)
-		var packet GossipPacket
-		err := decoder.Decode(&packet)
-		if err != nil {
-			panic(err)
-		}
-		if packet.Rumor != nil {
-			fmt.Printf("CLIENT MESSAGE %s\n", packet.Rumor.Text)
-		} else {
-			fmt.Printf("CLIENT MESSAGE %s\n", packet.Simple.Contents)
-		}
-		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
+	messageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+			case http.MethodGet: {
+				gossiper.messagesMap.RLock()
+				messagesMap := gossiper.messagesMap.messages
+				gossiper.messagesMap.RUnlock()
 
-		// Assuming client is not able to send Status messages
-		if packet.Rumor != nil {
-			gossiper.messagesMap.RLock()
-			messages := gossiper.messagesMap.messages[gossiper.Name]
-			gossiper.messagesMap.RUnlock()
+				mapJson, err := json.Marshal(messagesMap)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 
-			nextId := getNextWantId(messages)
+				w.Header().Set("Content-Type", "application/json")
+				w.Write(mapJson)
+			}
+			case http.MethodPost: {
+				decoder := json.NewDecoder(r.Body)
+				var packet GossipPacket
+				err := decoder.Decode(&packet)
+				if err != nil {
+					panic(err)
+				}
+				if packet.Rumor != nil {
+					fmt.Printf("CLIENT MESSAGE %s\n", packet.Rumor.Text)
+				} else {
+					fmt.Printf("CLIENT MESSAGE %s\n", packet.Simple.Contents)
+				}
+				fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
 
-			packet.Rumor.ID = nextId
-			packet.Rumor.Origin = gossiper.Name
+				if packet.Rumor != nil {
+					gossiper.messagesMap.RLock()
+					messages := gossiper.messagesMap.messages[gossiper.Name]
+					gossiper.messagesMap.RUnlock()
 
-			gossiper.storeMessage(packet.Rumor)
-			go gossiper.rumourMonger(*packet.Rumor, "")
-		} else { // SimpleMessage
-			go gossiper.broadcast(packet)
+					nextId := getNextWantId(messages)
+
+					packet.Rumor.ID = nextId
+					packet.Rumor.Origin = gossiper.Name
+
+					gossiper.storeMessage(packet.Rumor)
+					go gossiper.rumourMonger(*packet.Rumor, "")
+				} else { // SimpleMessage
+					go gossiper.broadcast(packet)
+				}
+			}
+			default:
+				http.Error(w, "Unsupported request method.", 405)
 		}
 	})
 
-	err := http.ListenAndServe(fmt.Sprintf(":%s", gossiper.uiPort), handler)
+	nodeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+			case http.MethodGet: {
+				peersList := gossiper.Peers
+
+				listJson, err := json.Marshal(peersList)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				w.Write(listJson)
+			}
+			case http.MethodPost: {
+				node, err := ioutil.ReadAll(r.Body)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				gossiper.Peers = append(gossiper.Peers, string(node[:]))
+			}
+			default:
+				http.Error(w, "Unsupported request method.", 405)
+		}
+	})
+
+	idHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+			case http.MethodGet: {
+				w.Write([]byte(gossiper.Name))
+			}
+			default:
+				http.Error(w, "Unsupported request method.", 405)
+		}
+	})
+
+	mux := http.NewServeMux()
+	fileServer := http.FileServer(http.Dir("./Ruchiranga/Peerster/client/static"))
+
+	mux.Handle("/", fileServer)
+	mux.Handle("/message", messageHandler)
+	mux.Handle("/node", nodeHandler)
+	mux.Handle("/id", idHandler)
+
+	fmt.Printf("UI Server starting on :%s\n", gossiper.uiPort)
+	err := http.ListenAndServe(fmt.Sprintf(":%s", gossiper.uiPort), mux)
+
 	if err != nil {
 		panic(err)
 	}
@@ -465,7 +532,7 @@ func (gossiper *Gossiper) doAntiEntropy(wg *sync.WaitGroup) {
 }
 
 func main() {
-	DEBUG := true
+	DEBUG := false
 
 	uiPort := flag.String("UIPort", "8080", "Port for the UI client")
 	gossipAddress := flag.String("gossipAddr", "127.0.0.1:5000", "ip:port for the gossiper")
