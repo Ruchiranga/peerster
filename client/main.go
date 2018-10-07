@@ -15,7 +15,7 @@ func main() {
 
 	url := fmt.Sprintf("%s:%s","http://localhost", *uiPort)
 	//contentSimple := fmt.Sprintf(`{"simple": {"contents": "%s"}}`, *message)
-	contentRumour := fmt.Sprintf(`{"rumour": {"text": "%s"}}`, *message)
+	contentRumour := fmt.Sprintf(`{"rumor": {"text": "%s"}}`, *message)
 
 	//fmt.Printf("URL: %s Message: %s", url, content)
 
