@@ -62,6 +62,7 @@ function renderNodes() {
 
 function renderMessages() {
     $.when(getMessagesFromServer()).then(function(messages) {
+        console.log(`All messages ${JSON.stringify(messages)}`);
         const filteredMessages = _.omitBy(messages, function(item) {
             if (JSON.stringify(messagesMap[item[0].Origin]) === JSON.stringify(item)) return true;
         });
