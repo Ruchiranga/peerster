@@ -103,6 +103,13 @@ function onClickNodeSend () {
     $("#send-node-txt").val('');
 }
 
+$("#send-message-txtarea").keypress(function (e) {
+    if(e.which == 13) {
+        onClickMessageSend();
+        e.preventDefault();
+    }
+});
+
 renderName();
 
 window.setInterval(function(){
