@@ -436,7 +436,9 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	mux.Handle("/node", nodeHandler)
 	mux.Handle("/id", idHandler)
 
-	fmt.Printf("UI Server starting on :%s\n", gossiper.uiPort)
+	if gossiper.debug {
+		fmt.Printf("UI Server starting on :%s\n", gossiper.uiPort)
+	}
 	err := http.ListenAndServe(fmt.Sprintf(":%s", gossiper.uiPort), mux)
 
 	if err != nil {
