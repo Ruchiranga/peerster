@@ -9,4 +9,4 @@
 
 ##### Running tests
 
-Before running `test_1_ring.sh` please make sure `simpleMode := true` is set in `client/main.go`. Similarly before running `test_2_ring.sh` it has to be set to `false`.
+Before running `test_1_ring.sh` please make sure `simpleMode := true` is set in `client/main.go` main function. Similarly before running `test_2_ring.sh` it has to be set to `false`.
