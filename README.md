@@ -7,6 +7,10 @@
 (Eg:- `go run Ruchiranga/Peerster/main.go -gossipAddr=127.0.0.1:5000 -peers=127.0.0.1:5001,127.0.0.1:5002 -name=jon_snow -UIPort=8080`)
 * Open the web browser and access `http://localhost:8080/` (or what ever the UI port specified when running the server) to use the node's web client
 
+###### Note
+
+It is extremely important that the `go run` command is executed being in `$GOPATH/src/github.com` since the paths to the static web content are specified relative to that directory. 
+
 ##### Running tests
 
 Before running `test_1_ring.sh` please make sure `simpleMode := true` is set in `client/main.go` main function. Similarly before running `test_2_ring.sh` it has to be set to `false`.
