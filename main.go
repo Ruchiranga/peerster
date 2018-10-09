@@ -97,7 +97,7 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 		protobuf.Decode(packetBytes, &packet)
 		gossiper.rememberPeer(relayPeer.String())
 
-		if gossiper.simple {
+		if gossiper.simple && packet.Simple != nil {
 			fmt.Printf("SIMPLE MESSAGE origin %s from %s contents %s\n", packet.Simple.OriginalName, packet.Simple.RelayPeerAddr, packet.Simple.Contents)
 			fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
 
@@ -128,7 +128,7 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 	} else if packet.Status != nil {
 		statusStr := fmt.Sprintf("STATUS from %s", relayPeer)
 		for _, peerStatus := range packet.Status.Want {
-			statusStr += fmt.Sprintf(" peer %s nextID %d", peerStatus.Identifier, peerStatus.NextId);
+			statusStr += fmt.Sprintf(" peer %s nextID %d", peerStatus.Identifier, peerStatus.NextId)
 		}
 		fmt.Printf("%s\n", statusStr)
 		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
@@ -225,7 +225,8 @@ outer:
 		ticker := time.NewTicker(time.Second)
 
 		select {
-			case ackStatus := <-peerAckChan: {
+		case ackStatus := <-peerAckChan:
+			{
 				gossiper.ackAwaitList.Lock()
 				gossiper.ackAwaitList.ackChans[randomPeerAddress] = nil
 				if gossiper.debug {
@@ -249,7 +250,8 @@ outer:
 					fmt.Printf("IN SYNC WITH %s\n", randomPeerAddress)
 				}
 			}
-			case <-ticker.C: {
+		case <-ticker.C:
+			{
 				gossiper.ackAwaitList.Lock()
 				gossiper.ackAwaitList.ackChans[randomPeerAddress] = nil
 				if gossiper.debug {
@@ -301,7 +303,7 @@ func getNextWantId(messages []RumorMessage) (nextId uint32) {
 	nextId = uint32(len(messages) + 1)
 	var idx int
 	for idx = range messages {
-		if messages[idx].ID != uint32(idx + 1) {
+		if messages[idx].ID != uint32(idx+1) {
 			nextId = uint32(idx + 1)
 			break
 		}
@@ -342,7 +344,8 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 
 	messageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-			case http.MethodGet: {
+		case http.MethodGet:
+			{
 				gossiper.messagesMap.RLock()
 				messagesMap := gossiper.messagesMap.messages
 				gossiper.messagesMap.RUnlock()
@@ -356,12 +359,14 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Write(mapJson)
 			}
-			case http.MethodPost: {
+		case http.MethodPost:
+			{
 				decoder := json.NewDecoder(r.Body)
 				var packet GossipPacket
 				err := decoder.Decode(&packet)
 				if err != nil {
-					panic(err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
 				}
 				if packet.Rumor != nil {
 					fmt.Printf("CLIENT MESSAGE %s\n", packet.Rumor.Text)
@@ -386,14 +391,15 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 					go gossiper.broadcast(packet)
 				}
 			}
-			default:
-				http.Error(w, "Unsupported request method.", 405)
+		default:
+			http.Error(w, "Unsupported request method.", 405)
 		}
 	})
 
 	nodeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-			case http.MethodGet: {
+		case http.MethodGet:
+			{
 				peersList := gossiper.Peers
 
 				listJson, err := json.Marshal(peersList)
@@ -405,7 +411,8 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Write(listJson)
 			}
-			case http.MethodPost: {
+		case http.MethodPost:
+			{
 				node, err := ioutil.ReadAll(r.Body)
 				if err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -413,18 +420,19 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 				}
 				gossiper.Peers = append(gossiper.Peers, string(node[:]))
 			}
-			default:
-				http.Error(w, "Unsupported request method.", 405)
+		default:
+			http.Error(w, "Unsupported request method.", 405)
 		}
 	})
 
 	idHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-			case http.MethodGet: {
+		case http.MethodGet:
+			{
 				w.Write([]byte(gossiper.Name))
 			}
-			default:
-				http.Error(w, "Unsupported request method.", 405)
+		default:
+			http.Error(w, "Unsupported request method.", 405)
 		}
 	})
 

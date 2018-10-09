@@ -1,4 +1,4 @@
-hostURL = "http://localhost:8080";
+hostURL = window.location.href.replace(/\/$/, "");
 
 messagesMap = {};
 nodesList = [];
@@ -83,29 +83,38 @@ function renderMessages() {
 
         messagesMap = messages;
     });
-};
+}
 
 function renderName() {
     $.when(getNameFromServer()).then(function (name) {
         $("#id-placeholder").html(`<b>${name}</b>`);
     });
-};
+}
 
 function onClickMessageSend () {
-    const text = $("#send-message-txtarea").val();
+    const textArea = $("#send-message-txtarea");
+    const text = textArea.val();
     sendMessageToServer(text);
-    $("#send-message-txtarea").val('');
+    textArea.val('');
 }
 
 function onClickNodeSend () {
-    const address = $("#send-node-txt").val();
+    const textBox = $("#send-node-txt");
+    const address = textBox.val();
     sendNodeToSever(address);
-    $("#send-node-txt").val('');
+    textBox.val('');
 }
 
 $("#send-message-txtarea").keypress(function (e) {
-    if(e.which == 13) {
+    if(e.which === 13) {
         onClickMessageSend();
+        e.preventDefault();
+    }
+});
+
+$("#send-node-txt").keypress(function (e) {
+    if(e.which === 13) {
+        onClickNodeSend();
         e.preventDefault();
     }
 });
