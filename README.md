@@ -2,7 +2,7 @@
 
 ##### Running Peerster and accessing the web client
 
-* Navigate to `/src/github.com/Ruchiranga/Peerster`
+* Navigate to `src/github.com/Ruchiranga/Peerster`
 * Execute `go build`
 * Execute `./Peerster -gossipAddr=... -peers=... -name=... -UIPort=...` along with the relevant arguments\
 (Eg:- `./Peerster -gossipAddr=127.0.0.1:5000 -peers=127.0.0.1:5001,127.0.0.1:5002 -name=jon_snow -UIPort=8080`)
