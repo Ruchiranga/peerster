@@ -3,21 +3,32 @@ hostURL = window.location.href.replace(/\/$/, "");
 messagesMap = {};
 nodesList = [];
 
+totalMessageCount = 0;
+
 function getMessagesFromServer() {
     return $.get(hostURL + "/message", function (data) {
         return data;
+    }).fail(function(err) {
+        console.log(err);
+        clearInterval(timer)
     });
 }
 
 function getNodesFromServer() {
     return $.get(hostURL + "/node", function (data) {
         return data;
+    }).fail(function(err) {
+        console.log(err);
+        clearInterval(timer)
     });
 }
 
 function getNameFromServer() {
     return $.get(hostURL + "/id", function (data) {
         return data;
+    }).fail(function(err) {
+        console.log(err);
+        clearInterval(timer)
     });
 }
 
@@ -30,7 +41,8 @@ function sendMessageToServer(text) {
         contentType: 'application/json',
         data: JSON.stringify(rumour),
         error: function (jqXhr, textStatus, errorThrown) {
-            alert(errorThrown);
+            console.log(errorThrown);
+            clearInterval(timer)
         }
     });
 }
@@ -41,7 +53,8 @@ function sendNodeToSever(address) {
         type: 'post',
         data: address,
         error: function (jqXhr, textStatus, errorThrown) {
-            alert(errorThrown);
+            console.log(errorThrown);
+            clearInterval(timer)
         }
     });
 }
@@ -49,7 +62,7 @@ function sendNodeToSever(address) {
 function renderNodes() {
     $.when(getNodesFromServer()).then(function(nodes) {
         const newNodes = _.difference(nodes, nodesList);
-        console.log(`New nodes: ${JSON.stringify(newNodes)}`);
+        // console.log(`New nodes: ${JSON.stringify(newNodes)}`);
 
         newNodes.forEach(function (node) {
             $("#nodes-list").append(`<li class="list-group-item"><b>${node}</b></li>`)
@@ -62,7 +75,7 @@ function renderNodes() {
 
 function renderMessages() {
     $.when(getMessagesFromServer()).then(function(messages) {
-        console.log(`All messages ${JSON.stringify(messages)}`);
+        // console.log(`All messages ${JSON.stringify(messages)}`);
         const filteredMessages = _.omitBy(messages, function(item) {
             if (JSON.stringify(messagesMap[item[0].Origin]) === JSON.stringify(item)) return true;
         });
@@ -75,8 +88,9 @@ function renderMessages() {
                 newMessages.push(...news)
             }
         }
-        console.log(`New messages: ${JSON.stringify(newMessages)}`);
-
+        // console.log(`New messages: ${JSON.stringify(newMessages)}`);
+        totalMessageCount += newMessages.length;
+        console.log(`${totalMessageCount} ${count === threshold ? 'im done' : ''}`);
         newMessages.forEach(function(rumor) {
             $("#chat-msgs-list").append(`<div><strong>${rumor.Origin} (Seq ${rumor.ID}) :</strong> ${rumor.Text}</div>`);
         });
@@ -121,7 +135,15 @@ $("#send-node-txt").keypress(function (e) {
 
 renderName();
 
-window.setInterval(function(){
+threshold = 10;
+count = 0;
+timer = setInterval(function(){
     renderMessages();
     renderNodes();
+
+    if (count < threshold) {
+        sendMessageToServer(`${Math.random() * 100}`)
+        count += 1;
+    }
+
 }, 1000);

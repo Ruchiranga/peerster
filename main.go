@@ -76,7 +76,19 @@ func (gossiper *Gossiper) rememberPeer(address string) {
 			return
 		}
 	}
+
+	if gossiper.debug {
+		fmt.Printf("Awaiting to obtain lock to initialize ack channel of %s\n", address)
+	}
+	gossiper.ackAwaitList.RLock()
+	gossiper.ackAwaitList.ackChans[address] = make(chan StatusPacket, 1)
+	gossiper.ackAwaitList.ackChans[address] <- StatusPacket{}
 	gossiper.Peers = append(gossiper.Peers, address)
+	if gossiper.debug {
+		fmt.Printf("Obtained lock and initialized ack channel of %s with a channel len %d\n", address,
+			len(gossiper.ackAwaitList.ackChans[address]))
+	}
+	gossiper.ackAwaitList.RUnlock()
 }
 
 func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
@@ -135,40 +147,49 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		fmt.Printf("%s\n", statusStr)
 		fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
 
+		if gossiper.debug {
+			fmt.Printf("Awaiting to obtain read lock to write to ack channel of %s\n", relayPeer)
+		}
 		gossiper.ackAwaitList.RLock()
-		ackChan := gossiper.ackAwaitList.ackChans[relayPeer]
-		gossiper.ackAwaitList.RUnlock()
+		select {
+		case gossiper.ackAwaitList.ackChans[relayPeer] <- *packet.Status:
+			{
+				gossiper.ackAwaitList.RUnlock()
+				if gossiper.debug {
+					fmt.Printf("__________Wrote status from %s to ack channel\n", relayPeer)
+				}
+				return
+			}
+		default:
+			{
+				gossiper.ackAwaitList.RUnlock()
+				if gossiper.debug {
+					fmt.Printf("__________Ack bufffer is full for %s\n", relayPeer)
+				}
+				if gossiper.debug {
+					fmt.Printf("__________Processing anti-entropy status from %s\n", relayPeer)
+				}
+				nextGossipPacket := gossiper.getNextMsgToSend(packet.Status.Want)
+				if nextGossipPacket.Rumor != nil {
+					if gossiper.debug {
+						fmt.Println("__________Initiating mongering as a result of anti entropy")
+					}
+					// In anti-entropy case we know the status sender does not have the message and we need to lock on him
+					// when sending the rumor, not send to a random peer.
+					go gossiper.rumourMonger(*nextGossipPacket.Rumor, relayPeer, true)
+				} else if nextGossipPacket.Status != nil {
+					if gossiper.debug {
+						fmt.Printf("__________Sending status to %s as a result of anti entropy\n", relayPeer)
+					}
+					go gossiper.broadcastToAddr(nextGossipPacket, relayPeer)
+				} else {
+					if gossiper.debug {
+						fmt.Printf("__________In sync with %s - query from anti entropy\n", relayPeer)
+					}
+					fmt.Printf("IN SYNC WITH %s\n", relayPeer)
+				}
+			}
 
-		if ackChan != nil { // If the status is an ack
-			if gossiper.debug {
-				fmt.Printf("__________Writing status from %s to ack channel\n", relayPeer)
-			}
-			gossiper.ackAwaitList.RLock()
-			gossiper.ackAwaitList.ackChans[relayPeer] <- *packet.Status
-			gossiper.ackAwaitList.RUnlock()
-		} else { // If the status is from anti-entropy
-			if gossiper.debug {
-				fmt.Printf("__________Processing anti-entropy status from %s\n", relayPeer)
-			}
-			nextGossipPacket := gossiper.getNextMsgToSend(packet.Status.Want)
-			if nextGossipPacket.Rumor != nil {
-				if gossiper.debug {
-					fmt.Println("__________Initiating mongering as a result of anti entropy")
-				}
-				// In anti-entropy case we know the status sender does not have the message and we need to lock on him
-				// when sending the rumor, not send to a random peer.
-				go gossiper.rumourMonger(*nextGossipPacket.Rumor, relayPeer, true)
-			} else if nextGossipPacket.Status != nil {
-				if gossiper.debug {
-					fmt.Printf("__________Sending status to %s as a result of anti entropy\n", relayPeer)
-				}
-				go gossiper.broadcastToAddr(nextGossipPacket, relayPeer)
-			} else {
-				if gossiper.debug {
-					fmt.Printf("__________In sync with %s - query from anti entropy\n", relayPeer)
-				}
-				fmt.Printf("IN SYNC WITH %s\n", relayPeer)
-			}
 		}
 
 	} else {
@@ -208,7 +229,7 @@ outer:
 			randomPeerAddress = gossiper.Peers[randomPeerIdx]
 		}
 
-		peerAckChan := make(chan StatusPacket, 1)
+		//peerAckChan := make(chan StatusPacket, 1)
 		// Assuming peers and ackChans arrays are parallel
 
 		if gossiper.debug {
@@ -216,10 +237,16 @@ outer:
 		}
 		gossiper.ackAwaitList.Lock()
 		if gossiper.debug {
-			fmt.Printf("__________Obtained lock to set ack channel and moger with peer %s\n", randomPeerAddress)
+			fmt.Printf("__________Obtained lock to set ack channel and moger with peer %s. Clearing the channel " +
+				"of length %d\n", randomPeerAddress, len(gossiper.ackAwaitList.ackChans[randomPeerAddress]))
 		}
-		gossiper.ackAwaitList.ackChans[randomPeerAddress] = peerAckChan
-		gossiper.ackAwaitList.Unlock()
+
+		<-gossiper.ackAwaitList.ackChans[randomPeerAddress]
+		if gossiper.debug {
+			fmt.Printf("__________Channel cleared to monger with peer %s. length is %d\n", randomPeerAddress,
+				len(gossiper.ackAwaitList.ackChans[randomPeerAddress]))
+		}
+		//gossiper.ackAwaitList.Unlock()
 
 		gossipPacket := GossipPacket{Rumor: &rumourToMonger}
 
@@ -237,13 +264,13 @@ outer:
 		ticker := time.NewTicker(time.Second)
 
 		select {
-		case ackStatus := <-peerAckChan:
+		case ackStatus := <-gossiper.ackAwaitList.ackChans[randomPeerAddress]:
 			{
-				gossiper.ackAwaitList.Lock()
-				gossiper.ackAwaitList.ackChans[randomPeerAddress] = nil
+				gossiper.ackAwaitList.ackChans[randomPeerAddress] <- StatusPacket{}
 				if gossiper.debug {
-					fmt.Printf("__________Reseted the ack chan of %s to nil\n", randomPeerAddress)
+					fmt.Printf("__________Filled the ack chan of %s with dummy\n", randomPeerAddress)
 				}
+
 				gossiper.ackAwaitList.Unlock()
 
 				ticker.Stop()
@@ -267,10 +294,9 @@ outer:
 			}
 		case <-ticker.C:
 			{
-				gossiper.ackAwaitList.Lock()
-				gossiper.ackAwaitList.ackChans[randomPeerAddress] = nil
+				gossiper.ackAwaitList.ackChans[randomPeerAddress] <- StatusPacket{}
 				if gossiper.debug {
-					fmt.Printf("__________Reset the ack chan of %s to nil\n", randomPeerAddress)
+					fmt.Printf("__________Filled the ack chan of %s with dummy\n", randomPeerAddress)
 				}
 				gossiper.ackAwaitList.Unlock()
 				lockedOnPeer = false
@@ -439,7 +465,20 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
-				gossiper.Peers = append(gossiper.Peers, string(node[:]))
+				address := string(node[:])
+				if gossiper.debug {
+					fmt.Printf("Awaiting to obtain lock to initialize ack channel of %s\n", address)
+				}
+				gossiper.ackAwaitList.RLock()
+				gossiper.ackAwaitList.ackChans[address] = make(chan StatusPacket, 1)
+				gossiper.ackAwaitList.ackChans[address] <- StatusPacket{}
+				gossiper.Peers = append(gossiper.Peers, address)
+
+				if gossiper.debug {
+					fmt.Printf("Obtained lock and initialized ack channel of %s with a channel len %d\n", address,
+						len(gossiper.ackAwaitList.ackChans[address]))
+				}
+				gossiper.ackAwaitList.RUnlock()
 			}
 		default:
 			http.Error(w, "Unsupported request method.", 405)
@@ -481,6 +520,11 @@ func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip Gossi
 	// Check for any news I have
 	gossiper.messagesMap.RLock()
 
+	if gossiper.debug {
+		fmt.Println("Messages map: ", gossiper.messagesMap.messages)
+		fmt.Println("Peer wants", peerWants)
+	}
+
 outer:
 	for origin := range gossiper.messagesMap.messages {
 		if len(gossiper.messagesMap.messages[origin]) > 0 {
@@ -492,6 +536,9 @@ outer:
 						if message.ID >= peerWant {
 							gossip = GossipPacket{Rumor: &message}
 							gossiper.messagesMap.RUnlock()
+							if gossiper.debug {
+								fmt.Println("Returning a RUMOR as next message for peer wants ", peerWants)
+							}
 							return
 						}
 					}
@@ -500,6 +547,9 @@ outer:
 			}
 			gossip = GossipPacket{Rumor: &gossiper.messagesMap.messages[origin][0]}
 			gossiper.messagesMap.RUnlock()
+			if gossiper.debug {
+				fmt.Println("Returning a RUMOR as next message for peer wants ", peerWants)
+			}
 			return
 		}
 	}
@@ -516,6 +566,9 @@ outer:
 			statusPacket := gossiper.generateStatusPacket()
 			gossip = GossipPacket{Status: &statusPacket}
 			gossiper.messagesMap.RUnlock()
+			if gossiper.debug {
+				fmt.Println("Returning a STATUS as next message for peer wants ", peerWants)
+			}
 			return
 		}
 
@@ -523,6 +576,9 @@ outer:
 
 	// Execution coming here means neither of us have news.
 	gossiper.messagesMap.RUnlock()
+	if gossiper.debug {
+		fmt.Println("Returning NOTHING as next message for peer wants ", peerWants)
+	}
 	return
 }
 
@@ -577,7 +633,7 @@ func (gossiper *Gossiper) doAntiEntropy(wg *sync.WaitGroup) {
 }
 
 func main() {
-	DEBUG := false
+	DEBUG := true
 
 	uiPort := flag.String("UIPort", "8080", "Port for the UI client")
 	gossipAddress := flag.String("gossipAddr", "127.0.0.1:5000", "ip:port for the gossiper")
@@ -618,6 +674,15 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 
 	messagesMap := MessagesMap{messages: make(map[string][]RumorMessage)}
 	ackWaitList := AckAwaitList{ackChans: make(map[string]chan StatusPacket)}
+
+	for _, peer := range peers {
+		ackWaitList.ackChans[peer] = make(chan StatusPacket, 1)
+		ackWaitList.ackChans[peer] <- StatusPacket{}
+		if debug {
+			fmt.Printf("Initialized ack channel of %s with a channel len %d\n", peer,
+				len(ackWaitList.ackChans[address]))
+		}
+	}
 
 	randSource := rand.NewSource(time.Now().UTC().UnixNano())
 	randGen := rand.New(randSource)
