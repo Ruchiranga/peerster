@@ -135,7 +135,7 @@ $("#send-node-txt").keypress(function (e) {
 
 renderName();
 
-threshold = 10;
+threshold = 30;
 count = 0;
 timer = setInterval(function(){
     renderMessages();
