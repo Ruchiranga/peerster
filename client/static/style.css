@@ -1,5 +1,10 @@
 textarea {
     resize: none;
+    font-weight: normal;
+}
+
+input {
+    font-weight: normal;
 }
 
 .vertical-align {

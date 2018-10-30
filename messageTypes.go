@@ -21,10 +21,23 @@ type StatusPacket struct {
 	Want []PeerStatus
 }
 
-type GossipPacket struct {
-	Simple *SimpleMessage
-	Rumor  *RumorMessage
-	Status *StatusPacket
+type PrivateMessage struct {
+	Origin      string
+	ID          uint32
+	Text        string
+	Destination string
+	HopLimit    uint32
 }
 
+type GossipPacket struct {
+	Simple  *SimpleMessage
+	Rumor   *RumorMessage
+	Status  *StatusPacket
+	Private *PrivateMessage
+}
 
+type GenericMessage struct {
+	Origin string
+	ID     uint32
+	Text   string
+}

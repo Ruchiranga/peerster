@@ -1,7 +1,9 @@
 hostURL = window.location.href.replace(/\/$/, "");
 
-messagesMap = {};
-nodesList = [];
+gossipMessageMap = {};
+privateMessageMap = {};
+peerNodesList = [];
+knownNodesList = [];
 
 totalMessageCount = 0;
 
@@ -14,8 +16,17 @@ function getMessagesFromServer() {
     });
 }
 
-function getNodesFromServer() {
+function getPeerNodesFromServer() {
     return $.get(hostURL + "/node", function (data) {
+        return data;
+    }).fail(function(err) {
+        console.log(err);
+        clearInterval(timer)
+    });
+}
+
+function getKnownNodesFromServer() {
+    return $.get(hostURL + "/origin", function (data) {
         return data;
     }).fail(function(err) {
         console.log(err);
@@ -32,7 +43,21 @@ function getNameFromServer() {
     });
 }
 
-function sendMessageToServer(text) {
+function sendPrivateMessageToServer(dest, text) {
+    const message = {"Private": {"Text": text, "Destination": dest}};
+    $.ajax({
+        url: hostURL + "/message",
+        type: 'post',
+        contentType: 'application/json',
+        data: JSON.stringify(message),
+        error: function (jqXhr, textStatus, errorThrown) {
+            console.log(errorThrown);
+            clearInterval(timer)
+        }
+    });
+}
+
+function sendGossipMessageToServer(text) {
     const rumour = {"Rumor": {"Text": text}};
 
     $.ajax({
@@ -59,42 +84,86 @@ function sendNodeToSever(address) {
     });
 }
 
-function renderNodes() {
-    $.when(getNodesFromServer()).then(function(nodes) {
-        const newNodes = _.difference(nodes, nodesList);
+function renderPeerNodes() {
+    $.when(getPeerNodesFromServer()).then(function(nodes) {
+        const newNodes = _.difference(nodes, peerNodesList);
 
         newNodes.forEach(function (node) {
-            $("#nodes-list").append(`<li class="list-group-item"><b>${node}</b></li>`)
+            $("#peers-list").append(`<li class="list-group-item"><b>${node}</b></li>`)
         });
 
-        nodesList = nodes;
+        peerNodesList = nodes;
     })
+}
 
+function renderKnownNodes() {
+    $.when(getKnownNodesFromServer()).then(function(nodes) {
+        const newNodes = _.difference(nodes, knownNodesList);
+
+        newNodes.forEach(function (node) {
+            $("#known-nodes-list").append(`<a class="list-group-item origin-item"><b>${node}</b></a>`)
+        });
+
+        $(".origin-item").on('click', function() {
+            $('.active').removeClass('active');
+            $(this).toggleClass('active');
+            $('#private-msg-btn').removeAttr('disabled');
+        });
+
+        knownNodesList = nodes;
+    })
 }
 
 function renderMessages() {
     $.when(getMessagesFromServer()).then(function(messages) {
-        const filteredMessages = _.omitBy(messages, function(item) {
-            if (JSON.stringify(messagesMap[item[0].Origin]) === JSON.stringify(item)) return true;
-        });
-
-        let newMessages = [];
-        for (const key in filteredMessages) {
-            if (filteredMessages.hasOwnProperty(key)) {
-                const diff = filteredMessages[key].length - ((messagesMap[key] && messagesMap[key].length) || 0);
-                const news = filteredMessages[key].slice(Math.max(filteredMessages[key].length - diff, 0));
-                newMessages.push(...news)
+        const gossipMap = {};
+        const privateMap = {};
+        for (const key in messages) {
+            if (messages.hasOwnProperty(key)) {
+                messages[key].forEach(function (message) {
+                    if (message.ID === 0) {
+                        privateMap[key] ? privateMap[key].push(message) : privateMap[key] = [message]
+                    } else if (message.Text !== '') {
+                        gossipMap[key] ? gossipMap[key].push(message) : gossipMap[key] = [message]
+                    }
+                })
             }
         }
 
-        totalMessageCount += newMessages.length;
-        console.log(`Total Message count : ${totalMessageCount}`);
+        let newMessages = [];
+
+
+        for (const key in privateMap) {
+            if (privateMap.hasOwnProperty(key)) {
+                if (privateMessageMap[key]) {
+                    const lengthDiff = privateMap[key].length - privateMessageMap[key].length;
+                    const news = privateMap[key].slice(Math.max(privateMap[key].length - lengthDiff, 0));
+                    newMessages.push(...news)
+                } else {
+                    newMessages.push(...privateMap[key])
+                }
+            }
+        }
+        for (const key in gossipMap) {
+            if (gossipMap.hasOwnProperty(key)) {
+                if (gossipMessageMap[key]) {
+                    const lengthDiff = gossipMap[key].length - gossipMessageMap[key].length;
+                    const news = gossipMap[key].slice(Math.max(gossipMap[key].length - lengthDiff, 0));
+                    newMessages.push(...news)
+                } else {
+                    newMessages.push(...gossipMap[key])
+                }
+            }
+        }
 
         newMessages.forEach(function(rumor) {
-            $("#chat-msgs-list").append(`<div><strong>${rumor.Origin} (Seq ${rumor.ID}) :</strong> ${rumor.Text}</div>`);
+            if (rumor.Text !== '') {
+                $("#chat-msgs-list").append(`<div><strong>${rumor.Origin} (Seq ${rumor.ID}) :</strong> ${rumor.Text}</div>`);
+            }
         });
 
-        messagesMap = messages;
+        gossipMessageMap = gossipMap;
+        privateMessageMap = privateMap;
     });
 }
 
@@ -104,10 +173,19 @@ function renderName() {
     });
 }
 
-function onClickMessageSend () {
+function onClickGossipMessageSend () {
     const textArea = $("#send-message-txtarea");
     const text = textArea.val();
-    sendMessageToServer(text);
+    sendGossipMessageToServer(text);
+    textArea.val('');
+}
+
+function onClickPrivateMessageSend () {
+    const dest = $(".active")[0].text;
+    const textArea = $("#send-pm-txtarea");
+    const text = textArea.val();
+    sendPrivateMessageToServer(dest, text);
+    $("#pm-modal").modal("hide");
     textArea.val('');
 }
 
@@ -120,7 +198,7 @@ function onClickNodeSend () {
 
 $("#send-message-txtarea").keypress(function (e) {
     if(e.which === 13) {
-        onClickMessageSend();
+        onClickGossipMessageSend();
         e.preventDefault();
     }
 });
@@ -136,5 +214,6 @@ renderName();
 
 timer = setInterval(function(){
     renderMessages();
-    renderNodes();
+    renderPeerNodes();
+    renderKnownNodes();
 }, 1000);

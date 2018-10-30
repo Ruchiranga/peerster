@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,10 +23,12 @@ type Gossiper struct {
 	simple        bool
 	Peers         []string
 	ackAwaitMap   map[string]func(status StatusPacket)
-	messagesMap   map[string][]RumorMessage
+	messagesMap   map[string][]GenericMessage
+	routingTable  map[string]string
 	randGen       *rand.Rand
 	debug         bool
-	ticker        *time.Ticker
+	entropyTicker *time.Ticker
+	routingTicker *time.Ticker
 }
 
 func (gossiper *Gossiper) printPeers() {
@@ -77,19 +78,28 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 	}
 }
 
+func (gossiper *Gossiper) storeNextHop(origin string, nextHop string) {
+	printDSDVLog(origin, nextHop)
+	gossiper.routingTable[origin] = nextHop
+}
 
 func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 	if packet.Rumor != nil {
 		printRumorMessageLog(*packet.Rumor, relayPeer)
 		gossiper.printPeers()
 
-		rumour := packet.Rumor
+		rumor := packet.Rumor
 
-		if gossiper.isRumorNews(rumour) {
-			gossiper.storeMessage(rumour)
+		if gossiper.isRumorNews(rumor) {
+			if gossiper.debug {
+				fmt.Printf("__________Rumor %s is news. Proceeding to store message\n", packet.Rumor.Text)
+			}
+			message := getGenericMessageFromRumor(*rumor)
+			gossiper.storeMessage(message)
+			gossiper.storeNextHop(rumor.Origin, relayPeer)
 			statusPacket := gossiper.generateStatusPacket()
 			gossiper.writeToAddr(GossipPacket{Status: &statusPacket}, relayPeer)
-			gossiper.rumorMonger(*packet.Rumor, relayPeer, "",false)
+			gossiper.rumorMonger(*packet.Rumor, relayPeer, "", false)
 		} else {
 			if gossiper.debug {
 				fmt.Printf("__________Rumor %s is not news. So just sending back a status\n", packet.Rumor.Text)
@@ -126,9 +136,26 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 			}
 		}
 
+	} else if packet.Private != nil {
+		if packet.Private.Destination == gossiper.Name {
+			printPrivateMessageLog(*packet.Private)
+			genericMessage := getGenericMessageFromPrivate(*packet.Private)
+			gossiper.storeMessage(genericMessage)
+		} else {
+			packet.Private.HopLimit -= 1
+			if packet.Private.HopLimit > 0 {
+				gossiper.forwardPrivateMessage(packet.Private)
+			}
+		}
 	} else {
 		log.Fatal("Unexpected gossip packet type.")
 	}
+}
+
+func (gossiper *Gossiper) forwardPrivateMessage(private *PrivateMessage) {
+	address := gossiper.routingTable[private.Destination]
+	packet := GossipPacket{Private: private}
+	gossiper.writeToAddr(packet, address)
 }
 
 func (gossiper *Gossiper) rumorMonger(rumour RumorMessage, fromPeerAddress string, lockedOnPeer string, coinFlipped bool) {
@@ -156,7 +183,7 @@ func (gossiper *Gossiper) rumorMonger(rumour RumorMessage, fromPeerAddress strin
 	}
 
 	if coinFlipped {
-		fmt.Printf("FLIPPED COIN sending rumor to %s\n", randomPeerAddress)
+		printCoinFlippedLog(randomPeerAddress)
 	}
 
 	peerAckChan := make(chan StatusPacket)
@@ -175,7 +202,8 @@ func (gossiper *Gossiper) rumorMonger(rumour RumorMessage, fromPeerAddress strin
 		var ackStatusPtr *StatusPacket
 		ackStatusPtr = nil
 		select {
-		case ackStatus:= <-peerAckChan: ackStatusPtr = &ackStatus
+		case ackStatus := <-peerAckChan:
+			ackStatusPtr = &ackStatus
 		case <-ticker.C:
 		}
 
@@ -228,24 +256,20 @@ func (gossiper *Gossiper) generateStatusPacket() (statusPacket StatusPacket) {
 	return
 }
 
-func (gossiper *Gossiper) storeMessage(rumour *RumorMessage) {
-	messageList := gossiper.messagesMap[rumour.Origin]
-
-	messageList = append(messageList, *rumour)
-	sort.Slice(messageList, func(i, j int) bool {
-		return messageList[i].ID < messageList[j].ID
-	})
-
-	gossiper.messagesMap[rumour.Origin] = messageList
+func (gossiper *Gossiper) storeMessage(message GenericMessage) {
+	messageList := gossiper.messagesMap[message.Origin]
+	messageList = append(messageList, message)
+	gossiper.messagesMap[message.Origin] = messageList
 }
 
 func (gossiper *Gossiper) isRumorNews(rumour *RumorMessage) (news bool) {
 	news = true
-	for _, message := range gossiper.messagesMap[rumour.Origin] {
-		if message.ID == rumour.ID {
-			news = false
-			break
-		}
+	originMessages := gossiper.messagesMap[rumour.Origin]
+	nextWantId := getNextWantId(originMessages)
+
+	// We don't want anything other than the next expected rumor
+	if rumour.ID != nextWantId {
+		news = false
 	}
 	return
 }
@@ -259,10 +283,6 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 			switch r.Method {
 			case http.MethodGet:
 				{
-					if gossiper.debug {
-						fmt.Println("__________Processing message handler GET job")
-					}
-
 					mapJson, err := json.Marshal(gossiper.messagesMap)
 					if err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -274,10 +294,6 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 				}
 			case http.MethodPost:
 				{
-					if gossiper.debug {
-						fmt.Println("__________Processing message handler POST job")
-					}
-
 					decoder := json.NewDecoder(r.Body)
 					var packet GossipPacket
 					err := decoder.Decode(&packet)
@@ -287,7 +303,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 					}
 					if packet.Rumor != nil {
 						printClientMessageLog(packet.Rumor.Text)
-					} else {
+					} else if packet.Simple != nil {
 						printClientMessageLog(packet.Simple.Contents)
 					}
 					gossiper.printPeers()
@@ -299,8 +315,16 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 						packet.Rumor.ID = nextId
 						packet.Rumor.Origin = gossiper.Name
 
-						gossiper.storeMessage(packet.Rumor)
-						gossiper.rumorMonger(*packet.Rumor, "", "",false)
+						message := getGenericMessageFromRumor(*packet.Rumor)
+						gossiper.storeMessage(message)
+						gossiper.rumorMonger(*packet.Rumor, "", "", false)
+					} else if packet.Private != nil {
+						packet.Private.Origin = gossiper.Name
+						packet.Private.ID = 0
+						packet.Private.HopLimit = 10
+
+						nextHop := gossiper.routingTable[packet.Private.Destination]
+						gossiper.writeToAddr(packet, nextHop)
 					} else { // SimpleMessage
 						gossiper.broadcast(packet)
 					}
@@ -319,9 +343,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 			switch r.Method {
 			case http.MethodGet:
 				{
-					peersList := gossiper.Peers
-
-					listJson, err := json.Marshal(peersList)
+					listJson, err := json.Marshal(gossiper.Peers)
 					if err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
@@ -346,7 +368,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 			}
 			done <- true
 		}
-		<- done
+		<-done
 	})
 
 	idHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -360,6 +382,34 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 		}
 	})
 
+	originHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		done := make(chan bool)
+		gossiper.jobsChannel <- func() {
+			switch r.Method {
+			case http.MethodGet:
+				{
+					origins := []string{}
+					for origin := range gossiper.routingTable {
+						origins = append(origins, origin)
+					}
+					listJson, err := json.Marshal(origins)
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					w.Write(listJson)
+				}
+			default:
+				http.Error(w, "Unsupported request method.", 405)
+			}
+			done <- true
+		}
+		<-done
+
+	})
+
 	mux := http.NewServeMux()
 	fileServer := http.FileServer(http.Dir("./client/static"))
 
@@ -367,6 +417,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	mux.Handle("/message", messageHandler)
 	mux.Handle("/node", nodeHandler)
 	mux.Handle("/id", idHandler)
+	mux.Handle("/origin", originHandler)
 
 	if gossiper.debug {
 		fmt.Printf("UI Server starting on :%s\n", gossiper.uiPort)
@@ -388,16 +439,20 @@ outer:
 			for _, peerStatus := range peerWants {
 				if peerStatus.Identifier == origin {
 					peerWant := peerStatus.NextId
-					for _, message := range gossiper.messagesMap[origin] {
+					onlyGossips := getOnlyGossips(gossiper.messagesMap[origin])
+					for _, message := range onlyGossips {
 						if message.ID >= peerWant {
-							gossip = GossipPacket{Rumor: &message}
+							nextRumor := getRumorFromGenericMessage(message)
+							gossip = GossipPacket{Rumor: &nextRumor}
 							return
 						}
 					}
 					continue outer
 				}
 			}
-			gossip = GossipPacket{Rumor: &gossiper.messagesMap[origin][0]}
+			onlyGossips := getOnlyGossips(gossiper.messagesMap[origin])
+			nextRumor := getRumorFromGenericMessage(onlyGossips[0])
+			gossip = GossipPacket{Rumor: &nextRumor}
 			return
 		}
 	}
@@ -460,9 +515,9 @@ func (gossiper *Gossiper) broadcast(packet GossipPacket) {
 
 func (gossiper *Gossiper) doAntiEntropy(wg *sync.WaitGroup) {
 	defer wg.Done()
-	defer gossiper.ticker.Stop()
+	defer gossiper.entropyTicker.Stop()
 
-	for range gossiper.ticker.C {
+	for range gossiper.entropyTicker.C {
 		gossiper.jobsChannel <- func() {
 			if len(gossiper.Peers) > 0 {
 				randomPeerIdx := gossiper.randGen.Intn(len(gossiper.Peers))
@@ -474,11 +529,31 @@ func (gossiper *Gossiper) doAntiEntropy(wg *sync.WaitGroup) {
 	}
 }
 
+func (gossiper *Gossiper) announceRoutes(wg *sync.WaitGroup) {
+	defer wg.Done()
+	defer gossiper.routingTicker.Stop()
+
+	for ; true; <-gossiper.routingTicker.C {
+		gossiper.jobsChannel <- func() {
+			packet := GossipPacket{Rumor: &RumorMessage{Text: ""}}
+			messages := gossiper.messagesMap[gossiper.Name]
+			nextId := getNextWantId(messages)
+
+			packet.Rumor.ID = nextId
+			packet.Rumor.Origin = gossiper.Name
+
+			message := getGenericMessageFromRumor(*packet.Rumor)
+			gossiper.storeMessage(message)
+			gossiper.rumorMonger(*packet.Rumor, "", "", false)
+		}
+	}
+}
+
 func (gossiper *Gossiper) executeJobs(wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
-		job := <- gossiper.jobsChannel
+		job := <-gossiper.jobsChannel
 		job()
 	}
 }
