@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sort"
 )
 
 func printStatusMessageLog(packet GossipPacket, relayPeer string) {
@@ -44,16 +43,7 @@ func printDSDVLog(origin string, nextHop string) {
 
 func getNextWantId(messages []GenericMessage) (nextId uint32) {
 	onlyGossips := getOnlyGossips(messages)
-
 	nextId = uint32(len(onlyGossips) + 1)
-	// This processing is unnecessary since there are no gaps. But just in case...
-	var idx int
-	for idx = range onlyGossips {
-		if onlyGossips[idx].ID != uint32(idx+1) {
-			nextId = uint32(idx + 1)
-			break
-		}
-	}
 	return
 }
 
@@ -64,11 +54,6 @@ func getOnlyGossips(messages []GenericMessage) (onlyGossips []GenericMessage) {
 			onlyGossips = append(onlyGossips, message)
 		}
 	}
-
-	// Messages should already be in order. But just in case...
-	sort.Slice(onlyGossips, func(i, j int) bool {
-		return onlyGossips[i].ID < onlyGossips[j].ID
-	})
 	return
 }
 
