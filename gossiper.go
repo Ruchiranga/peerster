@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/dedis/protobuf"
@@ -9,30 +12,41 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"strings"
+	"os"
 	"sync"
 	"time"
 )
 
 type Gossiper struct {
-	jobsChannel   chan func()
-	gossipAddress *net.UDPAddr
-	gossipConn    *net.UDPConn
-	uiPort        string
-	Name          string
-	simple        bool
-	Peers         []string
-	ackAwaitMap   map[string]func(status StatusPacket)
-	messagesMap   map[string][]GenericMessage
-	routingTable  map[string]string
-	randGen       *rand.Rand
-	debug         bool
-	entropyTicker *time.Ticker
-	routingTicker *time.Ticker
+	jobsChannel      chan func()
+	gossipAddress    *net.UDPAddr
+	gossipConn       *net.UDPConn
+	uiPort           string
+	Name             string
+	simple           bool
+	Peers            []string
+	ackAwaitMap      map[string]func(status StatusPacket)
+	fileAwaitMap     map[string]func(reply DataReply)
+	messagesMap      map[string][]GenericMessage
+	routingTable     map[string]string
+	randGen          *rand.Rand
+	debug            bool
+	entropyTicker    *time.Ticker
+	routingTicker    *time.Ticker
+	fileList         []FileIndex
+	fileContentMap   map[string][]byte
+	currentDownloads map[string][]byte
+}
+
+type FileIndex struct {
+	Name     string
+	Size     uint32
+	MetaFile []byte
+	MetaHash [32]byte
 }
 
 func (gossiper *Gossiper) printPeers() {
-	fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
+	//fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
 }
 
 func (gossiper *Gossiper) rememberPeer(address string) {
@@ -54,7 +68,7 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 	for {
 		var packet GossipPacket
 
-		packetBytes := make([]byte, 4096)
+		packetBytes := make([]byte, 16384) //16KB
 		_, relayPeer, err := gossiper.gossipConn.ReadFromUDP(packetBytes)
 
 		if err != nil {
@@ -81,6 +95,138 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 func (gossiper *Gossiper) storeNextHop(origin string, nextHop string) {
 	printDSDVLog(origin, nextHop)
 	gossiper.routingTable[origin] = nextHop
+}
+
+func (gossiper *Gossiper) requestFileChunk(metaHashHex string, metaFile []byte, fromIndex int, fileName string, destination string, done chan bool) {
+	if fromIndex == len(metaFile) {
+		done <- true
+		return
+	}
+
+	endIndex := fromIndex + 32
+	if endIndex > len(metaFile) {
+		endIndex = len(metaFile)
+	}
+	hashChunk := metaFile[fromIndex:endIndex]
+
+	dataReplyChan := make(chan DataReply)
+	hashChunkHex := hex.EncodeToString(hashChunk)
+	gossiper.fileAwaitMap[hashChunkHex] = func(reply DataReply) {
+		select {
+		case dataReplyChan <- reply:
+		default:
+		}
+	}
+
+	dataRequest := DataRequest{Origin: gossiper.Name, Destination: destination, HopLimit: 10, HashValue: hashChunk}
+	success := gossiper.forwardDataRequest(&dataRequest)
+
+	printFileChunkDownloadLog(fileName, (fromIndex/32)+1, destination)
+	if success {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			var replyPtr *DataReply
+			replyPtr = nil
+			select {
+			case reply := <-dataReplyChan:
+				replyPtr = &reply
+			case <-ticker.C:
+			}
+
+			gossiper.jobsChannel <- func() {
+				close(dataReplyChan)
+				delete(gossiper.fileAwaitMap, hashChunkHex)
+				ticker.Stop()
+
+				if replyPtr != nil {
+					fmt.Println("Got SOME reply")
+					replyDataHash := sha256.Sum256(replyPtr.Data)
+					if bytes.Equal(replyPtr.HashValue, replyDataHash[:]) {
+						fmt.Println("reply is not valid")
+						// To be able to be served to another peer
+						gossiper.fileContentMap[hashChunkHex] = replyPtr.Data
+						downloadedChunks := gossiper.currentDownloads[metaHashHex] // Should exist for sure
+						gossiper.currentDownloads[metaHashHex] = append(downloadedChunks, replyPtr.Data...)
+						fmt.Println("downloadedChunks len", len(downloadedChunks))
+						gossiper.requestFileChunk(metaHashHex, metaFile, endIndex, fileName, destination, done)
+						return
+					}
+					rdhash := sha256.Sum256(replyPtr.Data)
+					fmt.Println("bytes.Equal(replyPtr.HashValue, replyDataHash[:])", bytes.Equal(replyPtr.HashValue, rdhash[:]))
+				}
+				fmt.Println("replyptr nil? ", replyPtr == nil)
+
+				// keep retrying if I didn't get what I want
+				gossiper.requestFileChunk(metaHashHex, metaFile, fromIndex, fileName, destination, done)
+			}
+		}()
+	}
+}
+
+func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName string, destination string, done chan bool) {
+	metaHash, err := hex.DecodeString(metaHashHex)
+	if err != nil {
+		log.Fatal(fmt.Sprintf("Failed to decode hex string %s to []byte", metaHashHex))
+		return
+	}
+
+	dataReplyChan := make(chan DataReply)
+	gossiper.fileAwaitMap[metaHashHex] = func(reply DataReply) {
+		select {
+		case dataReplyChan <- reply:
+		default:
+		}
+	}
+
+	dataRequest := DataRequest{Origin: gossiper.Name, Destination: destination, HopLimit: 10, HashValue: metaHash}
+	success := gossiper.forwardDataRequest(&dataRequest)
+
+	printMetaFileDownloadLog(fileName, destination)
+	if success {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			var replyPtr *DataReply
+			replyPtr = nil
+			select {
+			case reply := <-dataReplyChan:
+				replyPtr = &reply
+			case <-ticker.C:
+			}
+
+			gossiper.jobsChannel <- func() {
+				close(dataReplyChan)
+				delete(gossiper.fileAwaitMap, metaHashHex)
+				ticker.Stop()
+
+				if replyPtr != nil {
+					replyDataHash := sha256.Sum256(replyPtr.Data)
+					if bytes.Equal(replyPtr.HashValue, replyDataHash[:]) {
+						// To be able to be served to another peer
+						gossiper.fileContentMap[metaHashHex] = replyPtr.Data
+						gossiper.requestFileChunk(metaHashHex, replyPtr.Data, 0, fileName, destination, done)
+						return
+					}
+				}
+				// keep retrying if I didn't get what I want
+				gossiper.initiateFileDownload(metaHashHex, fileName, destination, done)
+			}
+		}()
+	}
+}
+
+func (gossiper *Gossiper) requestFile(metaHashHex string, destination string, saveAs string) {
+	gossiper.currentDownloads[metaHashHex] = []byte{}
+	done := make(chan bool)
+	fmt.Println("Calling initiateFileDownload with ", metaHashHex, saveAs, destination, done)
+	gossiper.initiateFileDownload(metaHashHex, saveAs, destination, done)
+
+	go func() {
+		<-done
+		content := gossiper.currentDownloads[metaHashHex]
+		writeToFile(content, saveAs)
+		printFileReconstructLog(saveAs)
+		delete(gossiper.currentDownloads, metaHashHex)
+	}()
 }
 
 func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
@@ -135,7 +281,6 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 				printInSyncLog(relayPeer)
 			}
 		}
-
 	} else if packet.Private != nil {
 		if packet.Private.Destination == gossiper.Name {
 			printPrivateMessageLog(*packet.Private)
@@ -147,15 +292,83 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 				gossiper.forwardPrivateMessage(packet.Private)
 			}
 		}
+	} else if packet.DataRequest != nil {
+		fmt.Println("DataRequest received", packet.DataRequest.Destination, packet.DataRequest.Origin, packet.DataRequest.HashValue, packet.DataRequest.HopLimit)
+		request := packet.DataRequest
+		if request.Destination == gossiper.Name {
+			data, available := gossiper.fileContentMap[hex.EncodeToString(request.HashValue)]
+			fmt.Println("reply available", available)
+			fmt.Println("reply", data)
+
+			if available {
+				reply := DataReply{Origin: gossiper.Name, Destination: request.Origin, HopLimit: 10, HashValue: request.HashValue, Data: data}
+				gossiper.forwardDataReply(&reply)
+			}
+		} else {
+			packet.DataRequest.HopLimit -= 1
+			if packet.DataRequest.HopLimit > 0 {
+				gossiper.forwardDataRequest(packet.DataRequest)
+			}
+		}
+	} else if packet.DataReply != nil {
+		fmt.Println("DataReply received", packet.DataReply.Destination, packet.DataReply.Origin, packet.DataReply.HashValue, packet.DataReply.HopLimit)
+
+		if packet.DataReply.Destination == gossiper.Name {
+			handler, available := gossiper.fileAwaitMap[hex.EncodeToString(packet.DataReply.HashValue)]
+			fmt.Println("hadnle available", available)
+			if available {
+				handler(*packet.DataReply)
+			}
+		} else {
+			packet.DataReply.HopLimit -= 1
+			if packet.DataReply.HopLimit > 0 {
+				gossiper.forwardDataReply(packet.DataReply)
+			}
+		}
 	} else {
 		log.Fatal("Unexpected gossip packet type.")
 	}
 }
 
 func (gossiper *Gossiper) forwardPrivateMessage(private *PrivateMessage) {
-	address := gossiper.routingTable[private.Destination]
-	packet := GossipPacket{Private: private}
-	gossiper.writeToAddr(packet, address)
+	address, found := gossiper.routingTable[private.Destination]
+	if found {
+		packet := GossipPacket{Private: private}
+		gossiper.writeToAddr(packet, address)
+	} else {
+		log.Fatal(fmt.Sprintf("Failed to forward private message. Next hop for %s not found.", private.Destination))
+	}
+
+}
+
+func (gossiper *Gossiper) forwardDataRequest(request *DataRequest) (success bool) {
+	address, found := gossiper.routingTable[request.Destination]
+	if found {
+		packet := GossipPacket{DataRequest: request}
+		gossiper.writeToAddr(packet, address)
+		fmt.Println("Wrote date request to", address)
+		return true
+	} else {
+		log.Fatal(fmt.Sprintf("Failed to forward data request. Next hop for %s not found.", request.Destination))
+		return false
+	}
+
+}
+
+func (gossiper *Gossiper) forwardDataReply(reply *DataReply) (success bool) {
+	address, found := gossiper.routingTable[reply.Destination]
+	if found {
+		fmt.Println("forwarding data reply to", address, "reply data ", reply.Origin, reply.Destination, reply.HopLimit)
+		packet := GossipPacket{DataReply: reply}
+		gossiper.writeToAddr(packet, address)
+		fmt.Println("Wrote date reply to", address)
+
+		return true
+	} else {
+		log.Fatal(fmt.Sprintf("Failed to forward data reply. Next hop for %s not found.", reply.Destination))
+		return false
+	}
+
 }
 
 func (gossiper *Gossiper) rumorMonger(rumour RumorMessage, fromPeerAddress string, lockedOnPeer string, coinFlipped bool) {
@@ -410,6 +623,36 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 
 	})
 
+	fileHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		done := make(chan bool)
+		gossiper.jobsChannel <- func() {
+			switch r.Method {
+			case http.MethodPost:
+				{
+					fileName, err := ioutil.ReadAll(r.Body)
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					gossiper.jobsChannel <- func() {
+						gossiper.indexFile(string(fileName))
+					}
+				}
+			case http.MethodGet:
+				{
+					params := r.URL.Query()
+					gossiper.jobsChannel <- func() {
+						gossiper.requestFile(params["metaHash"][0], params["destination"][0], params["fileName"][0])
+					}
+				}
+			default:
+				http.Error(w, "Unsupported request method.", 405)
+			}
+			done <- true
+		}
+		<-done
+
+	})
 	mux := http.NewServeMux()
 	fileServer := http.FileServer(http.Dir("./client/static"))
 
@@ -418,6 +661,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	mux.Handle("/node", nodeHandler)
 	mux.Handle("/id", idHandler)
 	mux.Handle("/origin", originHandler)
+	mux.Handle("/file", fileHandler)
 
 	if gossiper.debug {
 		fmt.Printf("UI Server starting on :%s\n", gossiper.uiPort)
@@ -427,6 +671,53 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
+	chunkSize := 8 * 1024
+	file, openErr := os.Open(fmt.Sprintf("./_SharedFiles/%s", fileName))
+	defer file.Close()
+
+	if openErr != nil {
+		return false
+	}
+
+	chunks := [][]byte{}
+	size := uint32(0)
+	for {
+		buffer := make([]byte, chunkSize)
+		var readErr error
+		readCount, readErr := file.Read(buffer)
+		if readErr != nil {
+			if readErr.Error() == "EOF" {
+				break
+			} else {
+				return false
+			}
+		}
+		size += uint32(readCount)
+		chunks = append(chunks, buffer[0:readCount])
+	}
+
+	metaFile := []byte{}
+	for _, chunk := range chunks {
+		hash := sha256.Sum256(chunk)
+		gossiper.fileContentMap[hex.EncodeToString(hash[:])] = chunk
+		metaFile = append(metaFile, hash[:]...)
+	}
+	metaHash := sha256.Sum256(metaFile)
+	metaHashHex := hex.EncodeToString(metaHash[:])
+	fmt.Println("meta", metaHashHex)
+	gossiper.fileContentMap[metaHashHex] = metaFile
+
+	gossiper.fileList = append(gossiper.fileList, FileIndex{
+		Name:     fileName,
+		Size:     size,
+		MetaFile: metaFile,
+		MetaHash: metaHash,
+	})
+
+	return true
 }
 
 func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip GossipPacket) {
@@ -479,7 +770,7 @@ outer:
 
 func (gossiper *Gossiper) writeToAddr(packet GossipPacket, address string) {
 	if packet.Rumor != nil {
-		fmt.Printf("MONGERING with %s\n", address)
+		printMongeringWithLog(address)
 	}
 
 	destinationAddress, _ := net.ResolveUDPAddr("udp", address)

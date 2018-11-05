@@ -158,7 +158,10 @@ function renderMessages() {
 
         newMessages.forEach(function(rumor) {
             if (rumor.Text !== '') {
-                $("#chat-msgs-list").append(`<div><strong>${rumor.Origin} (Seq ${rumor.ID}) :</strong> ${rumor.Text}</div>`);
+                const privateBadge = '<span class="badge badge-secondary">PRIVATE</span>';
+                const seqNumber = `(Seq ${rumor.ID})`;
+                $("#chat-msgs-list").append(
+                    `<div><strong>${rumor.Origin} ${rumor.ID === 0 ? privateBadge : seqNumber}:</strong> ${rumor.Text}</div>`);
             }
         });
 

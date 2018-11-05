@@ -29,7 +29,7 @@ func main() {
 	}
 
 	gossiper := NewGossiper(*gossipAddress, *name, peersList, *uiPort, *simple, *rtimer, DEBUG)
-
+	//gossiper.indexFile(string("test.txt"))
 	var wg sync.WaitGroup
 	wg.Add(4)
 
@@ -57,6 +57,9 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 	messagesMap := make(map[string][]GenericMessage)
 	ackAwaitMap := make(map[string]func(status StatusPacket))
 	routingTable := make(map[string]string)
+	fileContentMap := make(map[string][]byte)
+	fileAwaitMap := make(map[string]func(reply DataReply))
+	currentDownloads := make(map[string][]byte)
 	// Jobs channel length did not seem to exceed 10 items even at high loads.
 	// Hence a value of 20 is given keeping a buffer.
 	jobsChannel := make(chan func(), 20)
@@ -71,19 +74,22 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 	}
 
 	return &Gossiper{
-		jobsChannel:   jobsChannel,
-		gossipAddress: udpAddr,
-		gossipConn:    udpConn,
-		Name:          name,
-		Peers:         peers,
-		uiPort:        uiPort,
-		simple:        simple,
-		ackAwaitMap:   ackAwaitMap,
-		messagesMap:   messagesMap,
-		routingTable:  routingTable,
-		randGen:       randGen,
-		debug:         debug,
-		entropyTicker: entropyTicker,
-		routingTicker: routingTicker,
+		jobsChannel:      jobsChannel,
+		gossipAddress:    udpAddr,
+		gossipConn:       udpConn,
+		Name:             name,
+		Peers:            peers,
+		uiPort:           uiPort,
+		simple:           simple,
+		ackAwaitMap:      ackAwaitMap,
+		messagesMap:      messagesMap,
+		routingTable:     routingTable,
+		randGen:          randGen,
+		debug:            debug,
+		entropyTicker:    entropyTicker,
+		routingTicker:    routingTicker,
+		fileContentMap:   fileContentMap,
+		fileAwaitMap:     fileAwaitMap,
+		currentDownloads: currentDownloads,
 	}
 }
