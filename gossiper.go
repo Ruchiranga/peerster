@@ -45,10 +45,6 @@ type FileIndex struct {
 	MetaHash [32]byte
 }
 
-func (gossiper *Gossiper) printPeers() {
-	//fmt.Printf("PEERS %s\n", strings.Join(gossiper.Peers, ","))
-}
-
 func (gossiper *Gossiper) rememberPeer(address string) {
 	if address == gossiper.gossipAddress.String() { // Being resilient to other nodes that might have bugs
 		return
@@ -68,7 +64,7 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 	for {
 		var packet GossipPacket
 
-		packetBytes := make([]byte, 16384) //16KB
+		packetBytes := make([]byte, 16384) // 16KB
 		_, relayPeer, err := gossiper.gossipConn.ReadFromUDP(packetBytes)
 
 		if err != nil {
@@ -82,7 +78,7 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 
 			if gossiper.simple && packet.Simple != nil {
 				printSimpleMessageLog(*packet.Simple)
-				gossiper.printPeers()
+				printPeersLog(gossiper.Peers)
 
 				gossiper.broadcast(packet)
 			} else {
@@ -139,23 +135,23 @@ func (gossiper *Gossiper) requestFileChunk(metaHashHex string, metaFile []byte, 
 				ticker.Stop()
 
 				if replyPtr != nil {
-					fmt.Println("Got SOME reply")
+					if gossiper.debug {
+						fmt.Println("__________Received a reply for file chunk request")
+					}
 					replyDataHash := sha256.Sum256(replyPtr.Data)
 					if bytes.Equal(replyPtr.HashValue, replyDataHash[:]) {
-						fmt.Println("reply is not valid")
 						// To be able to be served to another peer
 						gossiper.fileContentMap[hashChunkHex] = replyPtr.Data
 						downloadedChunks := gossiper.currentDownloads[metaHashHex] // Should exist for sure
 						gossiper.currentDownloads[metaHashHex] = append(downloadedChunks, replyPtr.Data...)
-						fmt.Println("downloadedChunks len", len(downloadedChunks))
 						gossiper.requestFileChunk(metaHashHex, metaFile, endIndex, fileName, destination, done)
 						return
+					} else {
+						if gossiper.debug {
+							fmt.Println("__________Chunk reply data and hash doesn't match. So dropping the packet.")
+						}
 					}
-					rdhash := sha256.Sum256(replyPtr.Data)
-					fmt.Println("bytes.Equal(replyPtr.HashValue, replyDataHash[:])", bytes.Equal(replyPtr.HashValue, rdhash[:]))
 				}
-				fmt.Println("replyptr nil? ", replyPtr == nil)
-
 				// keep retrying if I didn't get what I want
 				gossiper.requestFileChunk(metaHashHex, metaFile, fromIndex, fileName, destination, done)
 			}
@@ -166,7 +162,9 @@ func (gossiper *Gossiper) requestFileChunk(metaHashHex string, metaFile []byte, 
 func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName string, destination string, done chan bool) {
 	metaHash, err := hex.DecodeString(metaHashHex)
 	if err != nil {
-		log.Fatal(fmt.Sprintf("Failed to decode hex string %s to []byte", metaHashHex))
+		if gossiper.debug {
+			fmt.Printf("__________Failed to decode hex string %s to []byte\n", metaHashHex)
+		}
 		return
 	}
 
@@ -177,7 +175,6 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 		default:
 		}
 	}
-
 	dataRequest := DataRequest{Origin: gossiper.Name, Destination: destination, HopLimit: 10, HashValue: metaHash}
 	success := gossiper.forwardDataRequest(&dataRequest)
 
@@ -205,6 +202,10 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 						gossiper.fileContentMap[metaHashHex] = replyPtr.Data
 						gossiper.requestFileChunk(metaHashHex, replyPtr.Data, 0, fileName, destination, done)
 						return
+					} else {
+						if gossiper.debug {
+							fmt.Println("__________MetaFile Reply data and hash doesn't match. So dropping the packet.")
+						}
 					}
 				}
 				// keep retrying if I didn't get what I want
@@ -217,7 +218,10 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 func (gossiper *Gossiper) requestFile(metaHashHex string, destination string, saveAs string) {
 	gossiper.currentDownloads[metaHashHex] = []byte{}
 	done := make(chan bool)
-	fmt.Println("Calling initiateFileDownload with ", metaHashHex, saveAs, destination, done)
+
+	if gossiper.debug {
+		fmt.Printf("__________Initiating file download with metahash %s saveAs %s dest %s\n", metaHashHex, saveAs, destination)
+	}
 	gossiper.initiateFileDownload(metaHashHex, saveAs, destination, done)
 
 	go func() {
@@ -232,7 +236,7 @@ func (gossiper *Gossiper) requestFile(metaHashHex string, destination string, sa
 func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 	if packet.Rumor != nil {
 		printRumorMessageLog(*packet.Rumor, relayPeer)
-		gossiper.printPeers()
+		printPeersLog(gossiper.Peers)
 
 		rumor := packet.Rumor
 
@@ -255,7 +259,7 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		}
 	} else if packet.Status != nil {
 		printStatusMessageLog(packet, relayPeer)
-		gossiper.printPeers()
+		printPeersLog(gossiper.Peers)
 
 		handler, available := gossiper.ackAwaitMap[relayPeer]
 		if available {
@@ -293,14 +297,21 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 			}
 		}
 	} else if packet.DataRequest != nil {
-		fmt.Println("DataRequest received", packet.DataRequest.Destination, packet.DataRequest.Origin, packet.DataRequest.HashValue, packet.DataRequest.HopLimit)
 		request := packet.DataRequest
+
+		if gossiper.debug {
+			fmt.Printf("__________DataRequest received dest %s origin %s hash %s hop-limit %d\n",
+				request.Destination, request.Origin, request.HashValue, request.HopLimit)
+		}
+
 		if request.Destination == gossiper.Name {
 			data, available := gossiper.fileContentMap[hex.EncodeToString(request.HashValue)]
-			fmt.Println("reply available", available)
-			fmt.Println("reply", data)
 
 			if available {
+				if gossiper.debug {
+					fmt.Printf("__________Replying origin %s dest %s hash %s\n", gossiper.Name, request.Origin, request.HashValue)
+				}
+
 				reply := DataReply{Origin: gossiper.Name, Destination: request.Origin, HopLimit: 10, HashValue: request.HashValue, Data: data}
 				gossiper.forwardDataReply(&reply)
 			}
@@ -311,22 +322,31 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 			}
 		}
 	} else if packet.DataReply != nil {
-		fmt.Println("DataReply received", packet.DataReply.Destination, packet.DataReply.Origin, packet.DataReply.HashValue, packet.DataReply.HopLimit)
+		reply := packet.DataReply
 
-		if packet.DataReply.Destination == gossiper.Name {
-			handler, available := gossiper.fileAwaitMap[hex.EncodeToString(packet.DataReply.HashValue)]
-			fmt.Println("hadnle available", available)
+		if gossiper.debug {
+			fmt.Printf("__________DataReply received dest %s origin %s hash %s hop-limit %d\n", reply.Destination, reply.Origin, reply.HashValue, reply.HopLimit)
+		}
+
+		if reply.Destination == gossiper.Name {
+			handler, available := gossiper.fileAwaitMap[hex.EncodeToString(reply.HashValue)]
 			if available {
-				handler(*packet.DataReply)
+				if gossiper.debug {
+					fmt.Println("__________Calling handle found for hash ", reply.HashValue)
+				}
+
+				handler(*reply)
 			}
 		} else {
-			packet.DataReply.HopLimit -= 1
-			if packet.DataReply.HopLimit > 0 {
-				gossiper.forwardDataReply(packet.DataReply)
+			reply.HopLimit -= 1
+			if reply.HopLimit > 0 {
+				gossiper.forwardDataReply(reply)
 			}
 		}
 	} else {
-		log.Fatal("Unexpected gossip packet type.")
+		if gossiper.debug {
+			fmt.Println("__________Unexpected gossip packet type.")
+		}
 	}
 }
 
@@ -336,7 +356,9 @@ func (gossiper *Gossiper) forwardPrivateMessage(private *PrivateMessage) {
 		packet := GossipPacket{Private: private}
 		gossiper.writeToAddr(packet, address)
 	} else {
-		log.Fatal(fmt.Sprintf("Failed to forward private message. Next hop for %s not found.", private.Destination))
+		if gossiper.debug {
+			fmt.Printf("__________Failed to forward private message. Next hop for %s not found.\n", private.Destination)
+		}
 	}
 
 }
@@ -346,10 +368,15 @@ func (gossiper *Gossiper) forwardDataRequest(request *DataRequest) (success bool
 	if found {
 		packet := GossipPacket{DataRequest: request}
 		gossiper.writeToAddr(packet, address)
-		fmt.Println("Wrote date request to", address)
+
+		if gossiper.debug {
+			fmt.Printf("__________Forwarded data request with origin %s dest %s hop-limit %d to %s\n", request.Origin, request.Destination, request.HopLimit, address)
+		}
 		return true
 	} else {
-		log.Fatal(fmt.Sprintf("Failed to forward data request. Next hop for %s not found.", request.Destination))
+		if gossiper.debug {
+			fmt.Printf("__________Failed to forward data request. Next hop for %s not found.\n", request.Destination)
+		}
 		return false
 	}
 
@@ -358,14 +385,17 @@ func (gossiper *Gossiper) forwardDataRequest(request *DataRequest) (success bool
 func (gossiper *Gossiper) forwardDataReply(reply *DataReply) (success bool) {
 	address, found := gossiper.routingTable[reply.Destination]
 	if found {
-		fmt.Println("forwarding data reply to", address, "reply data ", reply.Origin, reply.Destination, reply.HopLimit)
 		packet := GossipPacket{DataReply: reply}
 		gossiper.writeToAddr(packet, address)
-		fmt.Println("Wrote date reply to", address)
 
+		if gossiper.debug {
+			fmt.Printf("__________Forwarded data reply with origin %s dest %s hop-limit %d to %s\n", reply.Origin, reply.Destination, reply.HopLimit, address)
+		}
 		return true
 	} else {
-		log.Fatal(fmt.Sprintf("Failed to forward data reply. Next hop for %s not found.", reply.Destination))
+		if gossiper.debug {
+			fmt.Printf("__________Failed to forward data reply. Next hop for %s not found.\n", reply.Destination)
+		}
 		return false
 	}
 
@@ -516,10 +546,12 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 					}
 					if packet.Rumor != nil {
 						printClientMessageLog(packet.Rumor.Text)
+					} else if packet.Private != nil {
+						printClientMessageLog(packet.Private.Text)
 					} else if packet.Simple != nil {
 						printClientMessageLog(packet.Simple.Contents)
 					}
-					gossiper.printPeers()
+					printPeersLog(gossiper.Peers)
 
 					if packet.Rumor != nil {
 						messages := gossiper.messagesMap[gossiper.Name]
@@ -536,8 +568,15 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 						packet.Private.ID = 0
 						packet.Private.HopLimit = 10
 
-						nextHop := gossiper.routingTable[packet.Private.Destination]
-						gossiper.writeToAddr(packet, nextHop)
+						nextHop, found := gossiper.routingTable[packet.Private.Destination]
+						if found {
+							gossiper.writeToAddr(packet, nextHop)
+						} else {
+							if gossiper.debug {
+								fmt.Printf("Could not forward client private message %s. " +
+									"Next hop for %s not found\n", packet.Private.Text, packet.Private.Destination)
+							}
+						}
 					} else { // SimpleMessage
 						gossiper.broadcast(packet)
 					}
@@ -635,6 +674,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 						return
 					}
 					gossiper.jobsChannel <- func() {
+						printFileIndexingLog(string(fileName))
 						gossiper.indexFile(string(fileName))
 					}
 				}
@@ -673,13 +713,16 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	}
 }
 
-func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
+func (gossiper *Gossiper) indexFile(fileName string) {
 	chunkSize := 8 * 1024
 	file, openErr := os.Open(fmt.Sprintf("./_SharedFiles/%s", fileName))
 	defer file.Close()
 
 	if openErr != nil {
-		return false
+		if gossiper.debug {
+			fmt.Println("__________Failed to open file while indexing", fileName)
+		}
+		return
 	}
 
 	chunks := [][]byte{}
@@ -692,7 +735,7 @@ func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
 			if readErr.Error() == "EOF" {
 				break
 			} else {
-				return false
+				return
 			}
 		}
 		size += uint32(readCount)
@@ -707,7 +750,6 @@ func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
 	}
 	metaHash := sha256.Sum256(metaFile)
 	metaHashHex := hex.EncodeToString(metaHash[:])
-	fmt.Println("meta", metaHashHex)
 	gossiper.fileContentMap[metaHashHex] = metaFile
 
 	gossiper.fileList = append(gossiper.fileList, FileIndex{
@@ -716,8 +758,7 @@ func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
 		MetaFile: metaFile,
 		MetaHash: metaHash,
 	})
-
-	return true
+	printFileIndexingCompletedLog(fileName, metaHashHex)
 }
 
 func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip GossipPacket) {

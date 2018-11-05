@@ -29,7 +29,7 @@ func main() {
 	}
 
 	gossiper := NewGossiper(*gossipAddress, *name, peersList, *uiPort, *simple, *rtimer, DEBUG)
-	//gossiper.indexFile(string("test.txt"))
+
 	var wg sync.WaitGroup
 	wg.Add(4)
 

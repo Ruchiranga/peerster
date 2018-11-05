@@ -2,28 +2,32 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
+	"strings"
 )
 
 func printStatusMessageLog(packet GossipPacket, relayPeer string) {
-	//statusStr := fmt.Sprintf("STATUS from %s", relayPeer)
-	//for _, peerStatus := range packet.Status.Want {
-	//	statusStr += fmt.Sprintf(" peer %s nextID %d", peerStatus.Identifier, peerStatus.NextId)
-	//}
-	//fmt.Printf("%s\n", statusStr)
+	statusStr := fmt.Sprintf("STATUS from %s", relayPeer)
+	for _, peerStatus := range packet.Status.Want {
+		statusStr += fmt.Sprintf(" peer %s nextID %d", peerStatus.Identifier, peerStatus.NextId)
+	}
+	fmt.Printf("%s\n", statusStr)
 }
 
 func printInSyncLog(relayPeer string) {
-	//fmt.Printf("IN SYNC WITH %s\n", relayPeer)
+	fmt.Printf("IN SYNC WITH %s\n", relayPeer)
 }
 
 func printMongeringWithLog(address string) {
-	//fmt.Printf("MONGERING with %s\n", address)
+	fmt.Printf("MONGERING with %s\n", address)
 }
 
 func printClientMessageLog(message string) {
 	fmt.Printf("CLIENT MESSAGE %s\n", message)
+}
+
+func printPeersLog(peers []string) {
+	fmt.Printf("PEERS %s\n", strings.Join(peers, ","))
 }
 
 func printSimpleMessageLog(message SimpleMessage) {
@@ -31,8 +35,8 @@ func printSimpleMessageLog(message SimpleMessage) {
 }
 
 func printRumorMessageLog(message RumorMessage, relayPeer string) {
-	//fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", message.Origin, relayPeer,
-	//	message.ID, message.Text)
+	fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", message.Origin, relayPeer,
+		message.ID, message.Text)
 }
 
 func printPrivateMessageLog(message PrivateMessage) {
@@ -51,12 +55,20 @@ func printFileReconstructLog(file string) {
 	fmt.Printf("RECONSTRUCTED file %s\n", file)
 }
 
+func printFileIndexingLog(file string) {
+	fmt.Printf("INDEXING file %s\n", file)
+}
+
+func printFileIndexingCompletedLog(file string, hash string) {
+	fmt.Printf("INDEXED file %s metahash %s\n", file, hash)
+}
+
 func printCoinFlippedLog(address string) {
-	//fmt.Printf("FLIPPED COIN sending rumor to %s\n", address)
+	fmt.Printf("FLIPPED COIN sending rumor to %s\n", address)
 }
 
 func printDSDVLog(origin string, nextHop string) {
-	//fmt.Printf("DSDV %s %s\n", origin, nextHop)
+	fmt.Printf("DSDV %s %s\n", origin, nextHop)
 }
 
 func getNextWantId(messages []GenericMessage) (nextId uint32) {
@@ -90,18 +102,19 @@ func getRumorFromGenericMessage(message GenericMessage) (rumor RumorMessage) {
 	return
 }
 
-func writeToFile(content []byte, name string) {
+func writeToFile(content []byte, name string) (writtenCount int){
 	file, err := os.Create(fmt.Sprintf("./_Downloads/%s", name))
 	if err != nil {
-		log.Fatal(fmt.Sprintf("Failed to create file %s", name))
+		fmt.Printf("__________Failed to create file %s\n", name)
 		return
 	}
 	defer file.Close()
 
 	count, err := file.Write(content)
 	if err != nil {
-		log.Fatal(fmt.Sprintf("Failed to write contents to file %s", name))
+		fmt.Printf("__________Failed to write contents to file %s\n", name)
 		return
 	}
-	fmt.Printf("Wrote %d bytes to file. Content size is %d", count, len(content))
+	writtenCount = count
+	return
 }
