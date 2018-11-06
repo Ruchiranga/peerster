@@ -52,7 +52,6 @@ function sendPrivateMessageToServer(dest, text) {
         data: JSON.stringify(message),
         error: function (jqXhr, textStatus, errorThrown) {
             console.log(errorThrown);
-            clearInterval(timer)
         }
     });
 }
@@ -67,7 +66,6 @@ function sendGossipMessageToServer(text) {
         data: JSON.stringify(rumour),
         error: function (jqXhr, textStatus, errorThrown) {
             console.log(errorThrown);
-            clearInterval(timer)
         }
     });
 }
@@ -79,8 +77,24 @@ function sendNodeToSever(address) {
         data: address,
         error: function (jqXhr, textStatus, errorThrown) {
             console.log(errorThrown);
-            clearInterval(timer)
         }
+    });
+}
+
+function sendIndexFileNameToServer(fileName) {
+    return $.ajax({
+        url: hostURL + "/file",
+        type: 'post',
+        data: fileName,
+        error: function (jqXhr, textStatus, errorThrown) {
+            console.log(errorThrown);
+        }
+    });
+}
+
+function sendFileDownloadRequestToServer(fileName, destination, hash) {
+    return $.get(hostURL + `/file?fileName=${fileName}&destination=${destination}&metaHash=${hash}`, function (data) {
+        return data;
     });
 }
 
@@ -108,6 +122,7 @@ function renderKnownNodes() {
             $('.active').removeClass('active');
             $(this).toggleClass('active');
             $('#private-msg-btn').removeAttr('disabled');
+            $('#file-download-btn').removeAttr('disabled');
         });
 
         knownNodesList = nodes;
@@ -199,24 +214,78 @@ function onClickNodeSend () {
     textBox.val('');
 }
 
-$("#send-message-txtarea").keypress(function (e) {
-    if(e.which === 13) {
-        onClickGossipMessageSend();
+function onClickIndexFileSend () {
+    const fileName = $('#file-input')[0].files[0].name;
+    $.when(sendIndexFileNameToServer(fileName)).then(
+        function(success) {
+            if (success === 'true') {
+                $('#file-index-status').html(`<div class="alert alert-success">File Indexed successfully</div>`);
+            } else {
+                $('#file-index-status').html(`<div class="alert alert-danger">File Indexing failed. Please select a file inside _SharedFiles directory</div>`);
+            }
+        }
+    );
+}
+
+function onClickTriggerDownload () {
+    const dest = $(".active")[0].text;
+    const fileNameTxt =  $("#file-name-txt");
+    const metaHashTxt = $("#file-hash-txt");
+    const fileName = fileNameTxt.val();
+    const methash = metaHashTxt.val();
+    $('#file-download-status').html('<div id="download-spinner"></div>');
+    $.when(sendFileDownloadRequestToServer(fileName, dest, methash)).then(function (status) {
+        if (status) {
+            $('#file-download-status').html(`<div id="download-status-alert" class="alert alert-success fade in">File download completed</div>`);
+            setTimeout(function () {
+                $('#download-status-alert').alert('close')
+            }, 3000)
+        }
+    }).fail(function(err) {
+        console.log(err);
+        $('#file-download-status').html(`<div id="download-status-alert" class="alert alert-danger fade in">File download failed</div>`);
+        setTimeout(function () {
+            $('#download-status-alert').alert('close')
+        }, 3000)
+    });
+    $("#file-modal").modal("hide");
+    fileNameTxt.val('');
+    metaHashTxt.val('');
+}
+
+$(function() {
+    $("form").submit(function(e) {
         e.preventDefault();
-    }
+    });
+
+    $("#send-message-txtarea").keypress(function (e) {
+        if(e.which === 13) {
+            onClickGossipMessageSend();
+            e.preventDefault();
+        }
+    });
+
+    $("#send-node-txt").keypress(function (e) {
+        if(e.which === 13) {
+            onClickNodeSend();
+            e.preventDefault();
+        }
+    });
+
+    $("#file-input").change(function(){
+        if ($(this).val()) {
+            $('#index-file-btn').removeAttr('disabled');
+        } else {
+            $('#index-file-btn').prop('disabled', true);
+        }
+        $('#file-index-status').html('')
+    });
+
+    renderName();
+
+    timer = setInterval(function(){
+        renderMessages();
+        renderPeerNodes();
+        renderKnownNodes();
+    }, 1000);
 });
-
-$("#send-node-txt").keypress(function (e) {
-    if(e.which === 13) {
-        onClickNodeSend();
-        e.preventDefault();
-    }
-});
-
-renderName();
-
-timer = setInterval(function(){
-    renderMessages();
-    renderPeerNodes();
-    renderKnownNodes();
-}, 1000);

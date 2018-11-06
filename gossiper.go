@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -215,7 +216,7 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 	}
 }
 
-func (gossiper *Gossiper) requestFile(metaHashHex string, destination string, saveAs string) {
+func (gossiper *Gossiper) requestFile(metaHashHex string, destination string, saveAs string, status chan bool) {
 	gossiper.currentDownloads[metaHashHex] = []byte{}
 	done := make(chan bool)
 
@@ -230,6 +231,7 @@ func (gossiper *Gossiper) requestFile(metaHashHex string, destination string, sa
 		writeToFile(content, saveAs)
 		printFileReconstructLog(saveAs)
 		delete(gossiper.currentDownloads, metaHashHex)
+		status <- true
 	}()
 }
 
@@ -573,7 +575,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 							gossiper.writeToAddr(packet, nextHop)
 						} else {
 							if gossiper.debug {
-								fmt.Printf("Could not forward client private message %s. " +
+								fmt.Printf("Could not forward client private message %s. "+
 									"Next hop for %s not found\n", packet.Private.Text, packet.Private.Destination)
 							}
 						}
@@ -663,7 +665,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	})
 
 	fileHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		done := make(chan bool)
+		statusChan := make(chan bool)
 		gossiper.jobsChannel <- func() {
 			switch r.Method {
 			case http.MethodPost:
@@ -675,23 +677,24 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 					}
 					gossiper.jobsChannel <- func() {
 						printFileIndexingLog(string(fileName))
-						gossiper.indexFile(string(fileName))
+						status := gossiper.indexFile(string(fileName))
+						statusChan <- status
 					}
 				}
 			case http.MethodGet:
 				{
 					params := r.URL.Query()
 					gossiper.jobsChannel <- func() {
-						gossiper.requestFile(params["metaHash"][0], params["destination"][0], params["fileName"][0])
+						gossiper.requestFile(params["metaHash"][0], params["destination"][0], params["fileName"][0], statusChan)
 					}
 				}
 			default:
 				http.Error(w, "Unsupported request method.", 405)
+				statusChan <- false
 			}
-			done <- true
 		}
-		<-done
-
+		status := <-statusChan
+		w.Write([]byte(strconv.FormatBool(status)))
 	})
 	mux := http.NewServeMux()
 	fileServer := http.FileServer(http.Dir("./client/static"))
@@ -713,7 +716,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	}
 }
 
-func (gossiper *Gossiper) indexFile(fileName string) {
+func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
 	chunkSize := 8 * 1024
 	file, openErr := os.Open(fmt.Sprintf("./_SharedFiles/%s", fileName))
 	defer file.Close()
@@ -722,7 +725,7 @@ func (gossiper *Gossiper) indexFile(fileName string) {
 		if gossiper.debug {
 			fmt.Println("__________Failed to open file while indexing", fileName)
 		}
-		return
+		return false
 	}
 
 	chunks := [][]byte{}
@@ -735,7 +738,7 @@ func (gossiper *Gossiper) indexFile(fileName string) {
 			if readErr.Error() == "EOF" {
 				break
 			} else {
-				return
+				return false
 			}
 		}
 		size += uint32(readCount)
@@ -759,6 +762,7 @@ func (gossiper *Gossiper) indexFile(fileName string) {
 		MetaHash: metaHash,
 	})
 	printFileIndexingCompletedLog(fileName, metaHashHex)
+	return true
 }
 
 func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip GossipPacket) {
