@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -139,19 +138,11 @@ func (gossiper *Gossiper) requestFileChunk(metaHashHex string, metaFile []byte, 
 					if gossiper.debug {
 						fmt.Println("__________Received a reply for file chunk request")
 					}
-					replyDataHash := sha256.Sum256(replyPtr.Data)
-					if bytes.Equal(replyPtr.HashValue, replyDataHash[:]) {
-						// To be able to be served to another peer
-						gossiper.fileContentMap[hashChunkHex] = replyPtr.Data
-						downloadedChunks := gossiper.currentDownloads[metaHashHex] // Should exist for sure
-						gossiper.currentDownloads[metaHashHex] = append(downloadedChunks, replyPtr.Data...)
-						gossiper.requestFileChunk(metaHashHex, metaFile, endIndex, fileName, destination, done)
-						return
-					} else {
-						if gossiper.debug {
-							fmt.Println("__________Chunk reply data and hash doesn't match. So dropping the packet.")
-						}
-					}
+					gossiper.fileContentMap[hashChunkHex] = replyPtr.Data
+					downloadedChunks := gossiper.currentDownloads[metaHashHex] // Should exist for sure
+					gossiper.currentDownloads[metaHashHex] = append(downloadedChunks, replyPtr.Data...)
+					gossiper.requestFileChunk(metaHashHex, metaFile, endIndex, fileName, destination, done)
+					return
 				}
 				// keep retrying if I didn't get what I want
 				gossiper.requestFileChunk(metaHashHex, metaFile, fromIndex, fileName, destination, done)
@@ -197,17 +188,10 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 				ticker.Stop()
 
 				if replyPtr != nil {
-					replyDataHash := sha256.Sum256(replyPtr.Data)
-					if bytes.Equal(replyPtr.HashValue, replyDataHash[:]) {
-						// To be able to be served to another peer
-						gossiper.fileContentMap[metaHashHex] = replyPtr.Data
-						gossiper.requestFileChunk(metaHashHex, replyPtr.Data, 0, fileName, destination, done)
-						return
-					} else {
-						if gossiper.debug {
-							fmt.Println("__________MetaFile Reply data and hash doesn't match. So dropping the packet.")
-						}
-					}
+					// To be able to be served to another peer
+					gossiper.fileContentMap[metaHashHex] = replyPtr.Data
+					gossiper.requestFileChunk(metaHashHex, replyPtr.Data, 0, fileName, destination, done)
+					return
 				}
 				// keep retrying if I didn't get what I want
 				gossiper.initiateFileDownload(metaHashHex, fileName, destination, done)
@@ -318,9 +302,9 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 				gossiper.forwardDataReply(&reply)
 			}
 		} else {
-			packet.DataRequest.HopLimit -= 1
-			if packet.DataRequest.HopLimit > 0 {
-				gossiper.forwardDataRequest(packet.DataRequest)
+			request.HopLimit -= 1
+			if request.HopLimit > 0 {
+				gossiper.forwardDataRequest(request)
 			}
 		}
 	} else if packet.DataReply != nil {
@@ -331,13 +315,20 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		}
 
 		if reply.Destination == gossiper.Name {
-			handler, available := gossiper.fileAwaitMap[hex.EncodeToString(reply.HashValue)]
-			if available {
-				if gossiper.debug {
-					fmt.Println("__________Calling handle found for hash ", reply.HashValue)
-				}
+			isValid := validateDataReply(reply)
+			if isValid {
+				handler, available := gossiper.fileAwaitMap[hex.EncodeToString(reply.HashValue)]
+				if available {
+					if gossiper.debug {
+						fmt.Println("__________Calling handle found for hash ", reply.HashValue)
+					}
 
-				handler(*reply)
+					handler(*reply)
+				}
+			} else {
+				if gossiper.debug {
+					fmt.Println("__________Chunk reply data and hash doesn't match. So dropping the packet.")
+				}
 			}
 		} else {
 			reply.HopLimit -= 1

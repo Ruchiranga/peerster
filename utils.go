@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"strings"
@@ -102,7 +104,7 @@ func getRumorFromGenericMessage(message GenericMessage) (rumor RumorMessage) {
 	return
 }
 
-func writeToFile(content []byte, name string) (writtenCount int){
+func writeToFile(content []byte, name string) (writtenCount int) {
 	file, err := os.Create(fmt.Sprintf("./_Downloads/%s", name))
 	if err != nil {
 		fmt.Printf("__________Failed to create file %s\n", name)
@@ -117,4 +119,12 @@ func writeToFile(content []byte, name string) (writtenCount int){
 	}
 	writtenCount = count
 	return
+}
+
+func validateDataReply(reply *DataReply) (valid bool) {
+	replyDataHash := sha256.Sum256(reply.Data)
+	if bytes.Equal(reply.HashValue, replyDataHash[:]) {
+		return true
+	}
+	return false
 }

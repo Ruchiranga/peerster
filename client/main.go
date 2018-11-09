@@ -26,7 +26,7 @@ func main() {
 		requestType = "POST"
 		if simpleMode {
 			content = fmt.Sprintf(`{"simple": {"contents": "%s"}}`, *message)
-		} else if *destination != "" && *message != "" {
+		} else if *destination != "" {
 			content = fmt.Sprintf(`{"private": {"text": "%s", "destination": "%s"}}`, *message, *destination)
 		} else {
 			content = fmt.Sprintf(`{"rumor": {"text": "%s"}}`, *message)
