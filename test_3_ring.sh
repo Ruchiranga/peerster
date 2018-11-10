@@ -24,7 +24,7 @@ pkill -f Peerster
 
 ./Peerster -UIPort=8081 -gossipAddr=127.0.0.1:5001 -name=A -peers=127.0.0.1:5002 > "A.out" &
 ./Peerster -UIPort=8082 -gossipAddr=127.0.0.1:5002 -name=B -peers=127.0.0.1:5003 > "B.out" &
-./Peerster -UIPort=8083 -gossipAddr=127.0.0.1:5003 -name=C -peers= > "C.out" &
+./Peerster -UIPort=8083 -gossipAddr=127.0.0.1:5003 -name=C > "C.out" &
 
 
 sleep 1

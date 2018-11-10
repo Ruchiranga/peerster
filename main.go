@@ -15,7 +15,7 @@ func main() {
 	uiPort := flag.String("UIPort", "8080", "Port for the UI client")
 	gossipAddress := flag.String("gossipAddr", "127.0.0.1:5000", "ip:port for the gossiper")
 	name := flag.String("name", "node-ruchiranga", "Name of the gossiper")
-	peersString := flag.String("peers", "127.0.0.1:5001,10.1.1.7:5002", "comma separated list of peers of the form ip:port")
+	peersString := flag.String("peers", "", "comma separated list of peers of the form ip:port")
 	simple := flag.Bool("simple", false, "run gossiper in simple broadcast mode")
 	rtimer := flag.Int("rtimer", 0, "route rumors sending period in seconds, 0 to disable sending of route rumors")
 

@@ -555,7 +555,9 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 
 						message := getGenericMessageFromRumor(*packet.Rumor)
 						gossiper.storeMessage(message)
-						gossiper.rumorMonger(*packet.Rumor, "", "", false)
+						if len(gossiper.Peers) > 0 {
+							gossiper.rumorMonger(*packet.Rumor, "", "", false)
+						}
 					} else if packet.Private != nil {
 						packet.Private.Origin = gossiper.Name
 						packet.Private.ID = 0
@@ -871,7 +873,9 @@ func (gossiper *Gossiper) announceRoutes(wg *sync.WaitGroup) {
 
 			message := getGenericMessageFromRumor(*packet.Rumor)
 			gossiper.storeMessage(message)
-			gossiper.rumorMonger(*packet.Rumor, "", "", false)
+			if len(gossiper.Peers) > 0 {
+				gossiper.rumorMonger(*packet.Rumor, "", "", false)
+			}
 		}
 	}
 }
