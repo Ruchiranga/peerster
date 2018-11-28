@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -61,6 +62,10 @@ func printFileIndexingLog(file string) {
 	fmt.Printf("INDEXING file %s\n", file)
 }
 
+func printSearchFinishedLog() {
+	fmt.Println("SEARCH FINISHED")
+}
+
 func printFileIndexingCompletedLog(file string, hash string) {
 	fmt.Printf("INDEXED file %s metahash %s\n", file, hash)
 }
@@ -71,6 +76,10 @@ func printCoinFlippedLog(address string) {
 
 func printDSDVLog(origin string, nextHop string) {
 	fmt.Printf("DSDV %s %s\n", origin, nextHop)
+}
+
+func printSearchResultLog(fileName string, origin string, metaHash []byte, chunkCount int) {
+	fmt.Printf("FOUND match %s at %s metafile=%s chunks=%d\n", fileName, origin, hex.EncodeToString(metaHash), chunkCount)
 }
 
 func getNextWantId(messages []GenericMessage) (nextId uint32) {

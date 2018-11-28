@@ -13,6 +13,8 @@ func main() {
 	message := flag.String("msg", "", "message to be sent")
 	file := flag.String("file", "", "file to be indexed by the gossiper")
 	requestHash := flag.String("request", "", "request a chunk or metafile of this hash")
+	keyWords := flag.String("keywords", "", "search for files having these key words")
+	budget := flag.Int("budget", -1, "Search budget")
 	simpleMode := false
 
 	flag.Parse()
@@ -34,11 +36,25 @@ func main() {
 	} else if *file != "" {
 		if *requestHash != "" {
 			requestType = "GET"
-			url = fmt.Sprintf("%s:%s/file?fileName=%s&destination=%s&metaHash=%s", "http://localhost", *uiPort, *file, *destination, *requestHash)
+			if *destination != "" {
+				url = fmt.Sprintf("%s:%s/file?fileName=%s&destination=%s&metaHash=%s",
+					"http://localhost", *uiPort, *file, *destination, *requestHash)
+			} else {
+				url = fmt.Sprintf("%s:%s/file?fileName=%s&metaHash=%s",
+					"http://localhost", *uiPort, *file, *requestHash)
+			}
 		} else {
 			requestType = "POST"
 			url = fmt.Sprintf("%s:%s/file", "http://localhost", *uiPort)
 			content = *file
+		}
+	} else if *keyWords != "" {
+		requestType = "GET"
+		if *budget > 0 {
+			url = fmt.Sprintf("%s:%s/search?keywords=%s&budget=%d", "http://localhost", *uiPort, *keyWords, *budget)
+			fmt.Println(url)
+		} else {
+			url = fmt.Sprintf("%s:%s/search?keywords=%s", "http://localhost", *uiPort, *keyWords)
 		}
 	}
 
@@ -54,5 +70,4 @@ func main() {
 			http.Post(url, "application/json", bytes.NewBuffer(jsonStr))
 		}
 	}
-
 }

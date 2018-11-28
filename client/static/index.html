@@ -44,9 +44,23 @@
                     <div class="panel-heading">Share File</div>
                     <div class="panel-body">
                         <input type="file" class="form-control-file" id="file-input">
-                        <button id="index-file-btn" type="submit" class="btn btn-default btn-md btn-block" disabled onclick="onClickIndexFileSend()">Share File</button>
+                        <button id="index-file-btn" type="submit" class="btn btn-default btn-md btn-block" disabled onclick="onClickIndexFile()">Share File</button>
                         <div id="file-index-status"></div>
                     </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="panel panel-default">
+                    <div class="panel-heading">Search File</div>
+                    <div class="panel-body">
+                        <input type="text" class="form-control" id="file-search-input" placeholder="Enter search term...">
+                        <button id="search-file-btn" type="submit" class="btn btn-default btn-md btn-block" disabled onclick="onClickSearchFile()">Search Files</button>
+                        <div id="file-search-status"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div id="search-results-list" class="list-group">
                 </div>
             </div>
         </div>

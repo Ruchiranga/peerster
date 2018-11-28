@@ -43,6 +43,15 @@ function getNameFromServer() {
     });
 }
 
+function getSearchResultsFromServer(keywords, cb) {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", `/search?keywords=${keywords}`, true);
+    xhr.onprogress = function () {
+        cb(xhr.responseText)
+    };
+    xhr.send();
+}
+
 function sendPrivateMessageToServer(dest, text) {
     const message = {"Private": {"Text": text, "Destination": dest}};
     $.ajax({
@@ -93,7 +102,11 @@ function sendIndexFileNameToServer(fileName) {
 }
 
 function sendFileDownloadRequestToServer(fileName, destination, hash) {
-    return $.get(hostURL + `/file?fileName=${fileName}&destination=${destination}&metaHash=${hash}`, function (data) {
+    let pathURL = `/file?fileName=${fileName}&metaHash=${hash}`;
+    if (destination) {
+        pathURL = `${pathURL}&destination=${destination}`
+    }
+    return $.get(hostURL + pathURL, function (data) {
         return data;
     });
 }
@@ -214,7 +227,7 @@ function onClickNodeSend () {
     textBox.val('');
 }
 
-function onClickIndexFileSend () {
+function onClickIndexFile () {
     const fileName = $('#file-input')[0].files[0].name;
     $.when(sendIndexFileNameToServer(fileName)).then(
         function(success) {
@@ -225,6 +238,23 @@ function onClickIndexFileSend () {
             }
         }
     );
+}
+
+function onClickSearchFile () {
+    const cb = function(fileNames) {
+        $('#search-results-list').html('');
+
+        const names = fileNames.split('\n');
+        names.forEach(function (name) {
+            if (name !== "") {
+                const splits = name.split(',');
+                $('#search-results-list').append(`<button type="button" class="list-group-item" data-metahash="${splits[1]}" ondblclick="onClickSearchDownload(this)">${splits[0]}</button>`)
+            }
+        });
+    };
+    const textBox = $("#file-search-input");
+    const keywords = textBox.val();
+    getSearchResultsFromServer(keywords, cb)
 }
 
 function onClickTriggerDownload () {
@@ -253,6 +283,26 @@ function onClickTriggerDownload () {
     metaHashTxt.val('');
 }
 
+function onClickSearchDownload (element) {
+    const fileName = element.innerHTML;
+    const methash = element.dataset.metahash;
+    $('#file-download-status').html('<div id="download-spinner"></div>');
+    $.when(sendFileDownloadRequestToServer(fileName, undefined, methash)).then(function (status) {
+        if (status) {
+            $('#file-download-status').html(`<div id="download-status-alert" class="alert alert-success fade in">File download completed</div>`);
+            setTimeout(function () {
+                $('#download-status-alert').alert('close')
+            }, 3000)
+        }
+    }).fail(function(err) {
+        console.log(err);
+        $('#file-download-status').html(`<div id="download-status-alert" class="alert alert-danger fade in">File download failed</div>`);
+        setTimeout(function () {
+            $('#download-status-alert').alert('close')
+        }, 3000)
+    });
+}
+
 $(function() {
     $("form").submit(function(e) {
         e.preventDefault();
@@ -269,6 +319,14 @@ $(function() {
         if(e.which === 13) {
             onClickNodeSend();
             e.preventDefault();
+        }
+    });
+
+    $("#file-search-input").keyup(function () {
+        if ($(this).val()) {
+            $('#search-file-btn').removeAttr('disabled');
+        } else {
+            $('#search-file-btn').prop('disabled', true);
         }
     });
 
