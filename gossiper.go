@@ -8,7 +8,6 @@ import (
 	"github.com/dedis/protobuf"
 	"io/ioutil"
 	"log"
-	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -504,16 +503,26 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		if reply.Destination == gossiper.Name {
 			results := reply.Results
 			if len(results) > 0 {
-				handlerKey := getSearchHandlerKey(gossiper.searchAwaitMap, results[0].FileName)
-				handler, available := gossiper.searchAwaitMap[handlerKey]
+				handlerKeys := getSearchHandlerKeys(gossiper.searchAwaitMap, results[0].FileName)
 
-				if available {
-					if gossiper.debug {
-						fmt.Println("__________Calling handler found for key ", handlerKey)
+				if len(handlerKeys) > 0 {
+					for _, handlerKey := range handlerKeys {
+						handler, available := gossiper.searchAwaitMap[handlerKey]
+
+						if available {
+							if gossiper.debug {
+								fmt.Println("__________Calling handler found for key ", handlerKey)
+							}
+
+							handler(*reply)
+						}
 					}
-
-					handler(*reply)
+				} else {
+					if gossiper.debug {
+						fmt.Println("__________No handlers found for file name ", results[0].FileName)
+					}
 				}
+
 			}
 		} else {
 			reply.HopLimit -= 1
@@ -528,8 +537,8 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 	}
 }
 
-func getSearchHandlerKey(searchAwaitMap map[string]func(reply SearchReply), fileName string) (matchingKey string) {
-	matchingKey = ""
+func getSearchHandlerKeys(searchAwaitMap map[string]func(reply SearchReply), fileName string) (matchingKeys []string) {
+	matchingKeys = []string{}
 
 	for key := range searchAwaitMap {
 		keywords := strings.Split(key, ",")
@@ -538,7 +547,7 @@ func getSearchHandlerKey(searchAwaitMap map[string]func(reply SearchReply), file
 			isMatch, _ := regexp.MatchString(pattern, fileName)
 
 			if isMatch {
-				matchingKey = key
+				matchingKeys = append(matchingKeys, key)
 			}
 		}
 	}
@@ -1050,7 +1059,6 @@ func (gossiper *Gossiper) searchFile(keywords string, budgetStr string, status c
 
 	matchThreshold := 2
 	budgetThreshold := uint64(32)
-	replyAwaitSeconds := int(math.Log2(float64(budgetThreshold))) + 3
 
 	matchThresholdMet := make(chan bool)
 
@@ -1067,95 +1075,69 @@ func (gossiper *Gossiper) searchFile(keywords string, budgetStr string, status c
 	totalMatches := []string{}
 
 	go func() {
-		// TODO verify how long to wait
-		ticker := time.NewTicker(time.Duration(replyAwaitSeconds) * time.Second)
 		for {
-			var replyPtr *SearchReply
-			replyPtr = nil
-			select {
-			case reply := <-searchReplyChan:
-				{
-					replyPtr = &reply
-				}
-			case <-ticker.C:
+			reply := <-searchReplyChan
+
+			if gossiper.debug {
+				fmt.Println("__________SearchReply handler received reply from", reply.Origin)
 			}
+			gossiper.jobsChannel <- func() {
+				results := reply.Results
 
-			if replyPtr == nil {
-				if gossiper.debug {
-					fmt.Println("__________SearchReply handler timed out")
-				}
+			outer:
+				for _, result := range results {
+					printSearchResultLog(result.FileName, reply.Origin, result.MetafileHash, len(result.ChunkMap))
+					metaHash := hex.EncodeToString(result.MetafileHash)
 
-				ticker.Stop()
-				delete(gossiper.searchAwaitMap, keywords)
-				close(searchReplyChan)
+				inner:
+					for _, chunkIdx := range result.ChunkMap {
+						_, found := gossiper.searchResults[metaHash]
 
-				select {
-				case status <- "":
-				default:
-				}
-
-				break
-			} else {
-				if gossiper.debug {
-					fmt.Println("__________SearchReply handler received reply from", replyPtr.Origin)
-				}
-				gossiper.jobsChannel <- func() {
-					results := replyPtr.Results
-
-				outer:
-					for _, result := range results {
-						printSearchResultLog(result.FileName, replyPtr.Origin, result.MetafileHash, len(result.ChunkMap))
-						metaHash := hex.EncodeToString(result.MetafileHash)
-
-					inner:
-						for _, chunkIdx := range result.ChunkMap {
-							_, found := gossiper.searchResults[metaHash]
-
-							if !found {
-								gossiper.searchResults[metaHash] = make(map[uint64][]string)
-							}
-
-							list, exists := gossiper.searchResults[metaHash][chunkIdx]
-
-							if !exists {
-								peers := []string{replyPtr.Origin}
-								gossiper.searchResults[metaHash][chunkIdx] = peers
-							} else {
-								for _, peer := range list {
-									if peer == replyPtr.Origin {
-										continue inner
-									}
-								}
-
-								gossiper.searchResults[metaHash][chunkIdx] = append(list, replyPtr.Origin)
-							}
+						if !found {
+							gossiper.searchResults[metaHash] = make(map[uint64][]string)
 						}
 
-						for _, match := range totalMatches {
-							if match == result.FileName {
-								continue outer
-							}
-						}
+						list, exists := gossiper.searchResults[metaHash][chunkIdx]
 
-						if isTotalMatch(gossiper.searchResults[metaHash], result.ChunkCount) {
-							totalMatches = append(totalMatches, result.FileName)
-							if len(totalMatches) >= matchThreshold {
-								select {
-								case matchThresholdMet <- true:
-								default:
+						if !exists {
+							peers := []string{reply.Origin}
+							gossiper.searchResults[metaHash][chunkIdx] = peers
+						} else {
+							for _, peer := range list {
+								if peer == reply.Origin {
+									continue inner
 								}
 							}
 
-							if gossiper.debug {
-								fmt.Printf("__________Result map for %s - %v\n", result.FileName, gossiper.searchResults[metaHash])
-							}
+							gossiper.searchResults[metaHash][chunkIdx] = append(list, reply.Origin)
+						}
+					}
 
-							returnString := fmt.Sprintf("%s,%s", result.FileName, metaHash)
+					for _, match := range totalMatches {
+						if match == result.FileName {
+							continue outer
+						}
+					}
 
+					if isTotalMatch(gossiper.searchResults[metaHash], result.ChunkCount) {
+						totalMatches = append(totalMatches, result.FileName)
+						if len(totalMatches) == matchThreshold {
 							select {
-							case status <- returnString:
+							case matchThresholdMet <- true:
 							default:
 							}
+							printSearchFinishedLog()
+						}
+
+						if gossiper.debug {
+							fmt.Printf("__________Result map for %s - %v\n", result.FileName, gossiper.searchResults[metaHash])
+						}
+
+						returnString := fmt.Sprintf("%s,%s", result.FileName, metaHash)
+
+						select {
+						case status <- returnString:
+						default:
 						}
 					}
 				}
@@ -1186,7 +1168,6 @@ func (gossiper *Gossiper) searchFile(keywords string, budgetStr string, status c
 					break
 				}
 			}
-			printSearchFinishedLog()
 		}()
 	} else {
 		budget, err := strconv.ParseUint(budgetStr, 0, 64)
@@ -1201,7 +1182,6 @@ func (gossiper *Gossiper) searchFile(keywords string, budgetStr string, status c
 
 		gossiper.jobsChannel <- func() {
 			gossiper.redistributeSearchRequest(&request)
-			printSearchFinishedLog()
 		}
 	}
 }
