@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -78,8 +79,18 @@ func printDSDVLog(origin string, nextHop string) {
 	fmt.Printf("DSDV %s %s\n", origin, nextHop)
 }
 
-func printSearchResultLog(fileName string, origin string, metaHash []byte, chunkCount int) {
-	fmt.Printf("FOUND match %s at %s metafile=%s chunks=%d\n", fileName, origin, hex.EncodeToString(metaHash), chunkCount)
+func printSearchResultLog(fileName string, origin string, metaHash []byte, chunkMap []uint64) {
+	sort.Slice(chunkMap, func(i, j int) bool {
+		return chunkMap[i] < chunkMap[j]
+	})
+	list := fmt.Sprintf("%d", chunkMap[0])
+	for idx, chunk := range chunkMap {
+		if idx == 0 {
+			continue
+		}
+		list = fmt.Sprintf("%s,%d", list, chunk)
+	}
+	fmt.Printf("FOUND match %s at %s metafile=%s chunks=%s\n", fileName, origin, hex.EncodeToString(metaHash), list)
 }
 
 func getNextWantId(messages []GenericMessage) (nextId uint32) {

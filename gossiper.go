@@ -125,7 +125,7 @@ func (gossiper *Gossiper) requestFileChunk(metaHashHex string, metaFile []byte, 
 
 		searchResults, found := gossiper.searchResults[metaHashHex]
 		if found {
-			somePeersHavingChunk, exists := searchResults[chunkIndex]
+			somePeersHavingChunk, exists := searchResults[chunkIndex+1]
 			if exists {
 				chosenPeerIdx := gossiper.randGen.Intn(len(somePeersHavingChunk))
 				destination = somePeersHavingChunk[chosenPeerIdx]
@@ -209,7 +209,7 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 	if destination == "" {
 		searchResults, found := gossiper.searchResults[metaHashHex]
 		if found {
-			somePeersHavingFile, exists := searchResults[0]
+			somePeersHavingFile, exists := searchResults[1]
 			if exists {
 				chosenPeerIdx := gossiper.randGen.Intn(len(somePeersHavingFile))
 				destination = somePeersHavingFile[chosenPeerIdx]
@@ -254,7 +254,7 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 					gossiper.fileContentMap[metaHashHex] = replyPtr.Data
 					gossiper.fileList = append(gossiper.fileList, FileIndex{
 						Name:     fileName,
-						Size:     0, // TODO reconsider
+						Size:     0, // TODO set the file size once the download is done
 						MetaFile: replyPtr.Data,
 						MetaHash: metaHash,
 					})
@@ -418,7 +418,6 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		}
 
 		key := fmt.Sprintf("%s-%v", request.Origin, request.Keywords)
-		// TODO check if this key is proper
 		recordedMillis, found := gossiper.lastSearchRequest[key]
 
 		nowInMillis := time.Now().UnixNano() / 1000000
@@ -460,8 +459,7 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 						_, found := gossiper.fileContentMap[hashChunkHex]
 
 						if found {
-							// TODO check if index is considered 0 based
-							chunkMap = append(chunkMap, uint64(fromIndex/32))
+							chunkMap = append(chunkMap, uint64(fromIndex/32)+1)
 						}
 
 						chunkCount += 1
@@ -1086,7 +1084,7 @@ func (gossiper *Gossiper) searchFile(keywords string, budgetStr string, status c
 
 			outer:
 				for _, result := range results {
-					printSearchResultLog(result.FileName, reply.Origin, result.MetafileHash, len(result.ChunkMap))
+					printSearchResultLog(result.FileName, reply.Origin, result.MetafileHash, result.ChunkMap)
 					metaHash := hex.EncodeToString(result.MetafileHash)
 
 				inner:
