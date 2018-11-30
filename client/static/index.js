@@ -49,6 +49,9 @@ function getSearchResultsFromServer(keywords, cb) {
     xhr.onprogress = function () {
         cb(xhr.responseText)
     };
+    xhr.onload = function () {
+        console.log(`Connection for keywords ${keywords} closed`)
+    };
     xhr.send();
 }
 
@@ -240,20 +243,35 @@ function onClickIndexFile () {
     );
 }
 
+function escapeRegExp(text) {
+    return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+}
+
 function onClickSearchFile () {
+    $('#search-results-list').html('');
+    const textBox = $("#file-search-input");
+    const keywords = textBox.val();
+
     const cb = function(fileNames) {
         $('#search-results-list').html('');
-
-        const names = fileNames.split('\n');
-        names.forEach(function (name) {
-            if (name !== "") {
-                const splits = name.split(',');
-                $('#search-results-list').append(`<button type="button" class="list-group-item" data-metahash="${splits[1]}" ondblclick="onClickSearchDownload(this)">${splits[0]}</button>`)
+        const lines = fileNames.split('\n');
+        lines.forEach(function (line) {
+            if (line !== "") {
+                const splits = line.split(',');
+                const fileName = splits[0];
+                const hash = splits[1];
+                keywords.split(',').forEach(function (keyword) {
+                    const regex = new RegExp('^.*' + escapeRegExp(keyword) + '.*$', 'g');
+                    if (fileName.match(regex)) {
+                        $('#search-results-list')
+                            .append(`<button type="button" class="list-group-item" data-metahash="${hash}" ondblclick="onClickSearchDownload(this)">${fileName}</button>`)
+                    } else {
+                        console.log(`Received result ${fileName} doesn't match the keywords`)
+                    }
+                })
             }
         });
     };
-    const textBox = $("#file-search-input");
-    const keywords = textBox.val();
     getSearchResultsFromServer(keywords, cb)
 }
 

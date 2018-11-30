@@ -1057,6 +1057,18 @@ func (gossiper *Gossiper) searchFile(keywords string, budgetStr string, status c
 
 	matchThreshold := 2
 	budgetThreshold := uint64(32)
+	guiAwaitTimedOut := false
+	guiTimeoutSecs := 20
+
+	go func() {
+		ticker := time.NewTicker(time.Duration(guiTimeoutSecs) * time.Second)
+		<-ticker.C
+		guiAwaitTimedOut = true
+		select {
+		case status <- "":
+		default:
+		}
+	}()
 
 	matchThresholdMet := make(chan bool)
 
@@ -1130,12 +1142,13 @@ func (gossiper *Gossiper) searchFile(keywords string, budgetStr string, status c
 						if gossiper.debug {
 							fmt.Printf("__________Result map for %s - %v\n", result.FileName, gossiper.searchResults[metaHash])
 						}
+						if !guiAwaitTimedOut {
+							returnString := fmt.Sprintf("%s,%s", result.FileName, metaHash)
 
-						returnString := fmt.Sprintf("%s,%s", result.FileName, metaHash)
-
-						select {
-						case status <- returnString:
-						default:
+							select {
+							case status <- returnString:
+							default:
+							}
 						}
 					}
 				}
