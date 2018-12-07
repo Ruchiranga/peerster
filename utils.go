@@ -63,8 +63,48 @@ func printFileIndexingLog(file string) {
 	fmt.Printf("INDEXING file %s\n", file)
 }
 
+func printSuccessfulMineLog(hash [32]byte) {
+	fmt.Printf("FOUND-BLOCK %x\n", hash)
+}
+
+func printBlockChainLog(chain []Block) {
+	var blockStrings []string
+
+	for _, block := range chain {
+		txs := fmt.Sprintf("%s", block.Transactions[0].File.Name)
+		for idx, tx := range block.Transactions {
+			if idx > 0 {
+				txs = fmt.Sprintf("%s,%s", txs, tx.File.Name)
+			}
+		}
+
+		blockStr := fmt.Sprintf("%x:%x:%s", block.Hash(), block.PrevHash, txs)
+		blockParen := fmt.Sprintf("%s", blockStr)
+		blockStrings = append(blockStrings, blockParen)
+	}
+
+	finalString := ""
+	for _, str := range blockStrings {
+		if finalString == "" {
+			finalString = fmt.Sprintf("%s", str)
+		} else {
+			finalString = fmt.Sprintf("%s %s", str, finalString)
+		}
+	}
+
+	fmt.Println(fmt.Sprintf("CHAIN %s", finalString))
+}
+
 func printSearchFinishedLog() {
 	fmt.Println("SEARCH FINISHED")
+}
+
+func printForkLongerLog(count int) {
+	fmt.Printf("FORK-LONGER rewind %d blocks\n", count)
+}
+
+func printForkShorterLog(hash [32]byte) {
+	fmt.Printf("FORK-SHORTER %x\n", hash)
 }
 
 func printFileIndexingCompletedLog(file string, hash string) {
@@ -145,6 +185,28 @@ func validateDataReply(reply *DataReply) (valid bool) {
 	replyDataHash := sha256.Sum256(reply.Data)
 	if bytes.Equal(reply.HashValue, replyDataHash[:]) {
 		return true
+	}
+	return false
+}
+
+func getCommonAncestorIndex(blockChain []Block, fork []Block) (idx int) {
+
+	for index := range blockChain {
+		thisBlockHash := blockChain[index].Hash()
+		thatBlockHash := fork[index].Hash()
+		if !bytes.Equal(thisBlockHash[:], thatBlockHash[:]) {
+			return index - 1
+		}
+	}
+	fmt.Println("Execution should not come here!")
+	return len(blockChain) - 1
+}
+
+func atLeastOneTrueExists(arr []bool) (exists bool) {
+	for _, val := range arr {
+		if val {
+			return true
+		}
 	}
 	return false
 }

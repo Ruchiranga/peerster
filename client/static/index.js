@@ -7,6 +7,8 @@ knownNodesList = [];
 
 totalMessageCount = 0;
 
+gossiperName = "";
+
 function getMessagesFromServer() {
     return $.get(hostURL + "/message", function (data) {
         return data;
@@ -202,8 +204,11 @@ function renderMessages() {
 }
 
 function renderName() {
-    $.when(getNameFromServer()).then(function (name) {
+    return $.when(getNameFromServer()).then(function (name) {
         $("#id-placeholder").html(`<b>${name}</b>`);
+
+        // For testing purposes
+        gossiperName = name;
     });
 }
 
@@ -233,6 +238,19 @@ function onClickNodeSend () {
 function onClickIndexFile () {
     const fileName = $('#file-input')[0].files[0].name;
     $.when(sendIndexFileNameToServer(fileName)).then(
+        function(success) {
+            if (success === 'true') {
+                $('#file-index-status').html(`<div class="alert alert-success">File Indexed successfully</div>`);
+            } else {
+                $('#file-index-status').html(`<div class="alert alert-danger">File Indexing failed. Please select a file inside _SharedFiles directory</div>`);
+            }
+        }
+    );
+}
+
+// Only used for testing purposes
+function clickIndexFileManual (name) {
+    $.when(sendIndexFileNameToServer(name)).then(
         function(success) {
             if (success === 'true') {
                 $('#file-index-status').html(`<div class="alert alert-success">File Indexed successfully</div>`);
@@ -357,7 +375,42 @@ $(function() {
         $('#file-index-status').html('')
     });
 
-    renderName();
+    renderName().then(function () {
+        // Testing code
+
+        // if (gossiperName === 'two' || gossiperName === 'eight' || gossiperName === 'five') {
+        //     clickIndexFileManual('test_ring_3_1.txt')
+        // }
+        // if (gossiperName === 'three') {
+        //     clickIndexFileManual('test_ring_3_2.txt')
+        // }
+        // if (gossiperName === 'four') {
+        //     clickIndexFileManual('test.txt')
+        // }
+        //
+        //
+        // const data = {
+        //     one: 1,
+        //     two: 2,
+        //     three:3,
+        //     four:4,
+        //     five:5,
+        //     six:6,
+        //     seven:7,
+        //     eight:8,
+        //     nine:9
+        // };
+        // let ptr = 0
+        // window.setInterval(function(){
+        //     const keys = Object.keys(data)
+        //     const key = keys[ptr]
+        //     if (gossiperName === key) {
+        //         console.log(`Indexing ${data[key]}.txt of ${key}`)
+        //         clickIndexFileManual(`${data[key]}.txt`)
+        //     }
+        //     ptr++;
+        // }, 1000);
+    });
 
     timer = setInterval(function(){
         renderMessages();

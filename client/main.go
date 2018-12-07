@@ -52,7 +52,6 @@ func main() {
 		requestType = "GET"
 		if *budget > 0 {
 			url = fmt.Sprintf("%s:%s/search?keywords=%s&budget=%d", "http://localhost", *uiPort, *keyWords, *budget)
-			fmt.Println(url)
 		} else {
 			url = fmt.Sprintf("%s:%s/search?keywords=%s", "http://localhost", *uiPort, *keyWords)
 		}

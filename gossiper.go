@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,27 +20,34 @@ import (
 )
 
 type Gossiper struct {
-	jobsChannel       chan func()
-	gossipAddress     *net.UDPAddr
-	gossipConn        *net.UDPConn
-	uiPort            string
-	Name              string
-	simple            bool
-	Peers             []string
-	ackAwaitMap       map[string]func(status StatusPacket)
-	fileAwaitMap      map[string]func(reply DataReply)
-	searchAwaitMap    map[string]func(reply SearchReply)
-	messagesMap       map[string][]GenericMessage
-	routingTable      map[string]string
-	randGen           *rand.Rand
-	debug             bool
-	entropyTicker     *time.Ticker
-	routingTicker     *time.Ticker
-	fileList          []FileIndex
-	fileContentMap    map[string][]byte
-	currentDownloads  map[string][]byte
-	lastSearchRequest map[string]int64
-	searchResults     map[string]map[uint64][]string
+	jobsChannel         chan func()
+	gossipAddress       *net.UDPAddr
+	gossipConn          *net.UDPConn
+	uiPort              string
+	Name                string
+	simple              bool
+	Peers               []string
+	ackAwaitMap         map[string]func(status StatusPacket)
+	fileAwaitMap        map[string]func(reply DataReply)
+	searchAwaitMap      map[string]func(reply SearchReply)
+	messagesMap         map[string][]GenericMessage
+	routingTable        map[string]string
+	randGen             *rand.Rand
+	debug               bool
+	entropyTicker       *time.Ticker
+	routingTicker       *time.Ticker
+	fileList            []FileIndex
+	fileContentMap      map[string][]byte
+	currentDownloads    map[string][]byte
+	lastSearchRequest   map[string]int64
+	searchResults       map[string]map[uint64][]string
+	fileMetaMap         map[string][]byte
+	blockChain          []Block
+	publishedTxs        []TxPublish
+	forks               [][]Block
+	blockChainEventLoop chan func()
+	txChannel           chan TxPublish
+	strayBlocks         []Block
 }
 
 type FileIndex struct {
@@ -295,261 +302,28 @@ func (gossiper *Gossiper) requestFile(metaHashHex string, destination string, sa
 
 func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 	if packet.Rumor != nil {
-		printRumorMessageLog(*packet.Rumor, relayPeer)
-		printPeersLog(gossiper.Peers)
-
-		rumor := packet.Rumor
-
-		if gossiper.isRumorNews(rumor) {
-			if gossiper.debug {
-				fmt.Printf("__________Rumor %s is news. Proceeding to store message\n", packet.Rumor.Text)
-			}
-			message := getGenericMessageFromRumor(*rumor)
-			gossiper.storeMessage(message)
-			gossiper.storeNextHop(rumor.Origin, relayPeer)
-			statusPacket := gossiper.generateStatusPacket()
-			gossiper.writeToAddr(GossipPacket{Status: &statusPacket}, relayPeer)
-			gossiper.rumorMonger(*packet.Rumor, relayPeer, "", false)
-		} else {
-			if gossiper.debug {
-				fmt.Printf("__________Rumor %s is not news. So just sending back a status\n", packet.Rumor.Text)
-			}
-			statusPacket := gossiper.generateStatusPacket()
-			gossiper.writeToAddr(GossipPacket{Status: &statusPacket}, relayPeer)
-		}
+		rumorHandler(packet, relayPeer, gossiper)
 	} else if packet.Status != nil {
-		printStatusMessageLog(packet, relayPeer)
-		printPeersLog(gossiper.Peers)
-
-		handler, available := gossiper.ackAwaitMap[relayPeer]
-		if available {
-			handler(*packet.Status)
-		} else { // If the status is from anti-entropy
-			if gossiper.debug {
-				fmt.Printf("__________Processing anti-entropy status from %s\n", relayPeer)
-			}
-			nextGossipPacket := gossiper.getNextMsgToSend(packet.Status.Want)
-			if nextGossipPacket.Rumor != nil {
-				if gossiper.debug {
-					fmt.Println("__________Initiating mongering as a result of anti entropy")
-				}
-				// In anti-entropy case we know the status sender does not have the message and we need to lock on him
-				// when sending the rumor, not send to a random peer.
-				gossiper.rumorMonger(*nextGossipPacket.Rumor, relayPeer, "", true)
-			} else if nextGossipPacket.Status != nil {
-				if gossiper.debug {
-					fmt.Printf("__________Sending status to %s as a result of anti entropy\n", relayPeer)
-				}
-				gossiper.writeToAddr(nextGossipPacket, relayPeer)
-			} else {
-				printInSyncLog(relayPeer)
-			}
-		}
+		statusHandler(packet, relayPeer, gossiper)
 	} else if packet.Private != nil {
-		if packet.Private.Destination == gossiper.Name {
-			printPrivateMessageLog(*packet.Private)
-			genericMessage := getGenericMessageFromPrivate(*packet.Private)
-			gossiper.storeMessage(genericMessage)
-		} else {
-			packet.Private.HopLimit -= 1
-			if packet.Private.HopLimit > 0 {
-				gossiper.forwardPrivateMessage(packet.Private)
-			}
-		}
+		privateHandler(packet, gossiper)
 	} else if packet.DataRequest != nil {
-		request := packet.DataRequest
-
-		if gossiper.debug {
-			fmt.Printf("__________DataRequest received dest %s origin %s hash %s hop-limit %d\n",
-				request.Destination, request.Origin, request.HashValue, request.HopLimit)
-		}
-
-		if request.Destination == gossiper.Name {
-			data, available := gossiper.fileContentMap[hex.EncodeToString(request.HashValue)]
-
-			if available {
-				if gossiper.debug {
-					fmt.Printf("__________Replying origin %s dest %s hash %s\n", gossiper.Name, request.Origin, request.HashValue)
-				}
-
-				reply := DataReply{Origin: gossiper.Name, Destination: request.Origin, HopLimit: 10, HashValue: request.HashValue, Data: data}
-				gossiper.forwardDataReply(&reply)
-			}
-		} else {
-			request.HopLimit -= 1
-			if request.HopLimit > 0 {
-				gossiper.forwardDataRequest(request)
-			}
-		}
+		dataRequestHandler(packet, gossiper)
 	} else if packet.DataReply != nil {
-		reply := packet.DataReply
-
-		if gossiper.debug {
-			fmt.Printf("__________DataReply received dest %s origin %s hash %s hop-limit %d\n", reply.Destination, reply.Origin, reply.HashValue, reply.HopLimit)
-		}
-
-		if reply.Destination == gossiper.Name {
-			isValid := validateDataReply(reply)
-			if isValid {
-				handler, available := gossiper.fileAwaitMap[hex.EncodeToString(reply.HashValue)]
-				if available {
-					if gossiper.debug {
-						fmt.Println("__________Calling handle found for hash ", reply.HashValue)
-					}
-
-					handler(*reply)
-				}
-			} else {
-				if gossiper.debug {
-					fmt.Println("__________Chunk reply data and hash doesn't match. So dropping the packet.")
-				}
-			}
-		} else {
-			reply.HopLimit -= 1
-			if reply.HopLimit > 0 {
-				gossiper.forwardDataReply(reply)
-			}
-		}
+		dataReplyHandler(packet, gossiper)
 	} else if packet.SearchRequest != nil {
-		request := packet.SearchRequest
-
-		if gossiper.debug {
-			fmt.Println("__________Received search request ", request.Origin, request.Keywords, request.Budget)
-		}
-
-		key := fmt.Sprintf("%s-%v", request.Origin, request.Keywords)
-		recordedMillis, found := gossiper.lastSearchRequest[key]
-
-		nowInMillis := time.Now().UnixNano() / 1000000
-		diff := nowInMillis - recordedMillis
-
-		gossiper.lastSearchRequest[key] = nowInMillis
-
-		if found && diff < 500 {
-			if gossiper.debug {
-				fmt.Println("Duplicate search request received from", key)
-			}
-			return
-		}
-
-		matches := []*SearchResult{}
-		for _, keyword := range request.Keywords {
-			pattern := fmt.Sprintf("^.*%s.*$", regexp.QuoteMeta(keyword))
-
-			for _, file := range gossiper.fileList {
-				isMatch, _ := regexp.MatchString(pattern, file.Name)
-				if gossiper.debug {
-					fmt.Printf("File name %s for pattern %s isMatch %t\n", file.Name, pattern, isMatch)
-				}
-				if isMatch {
-					chunkMap := []uint64{}
-					chunkCount := uint64(0)
-					metaFile := file.MetaFile
-
-					fromIndex := 0
-					for fromIndex != len(metaFile) {
-						endIndex := fromIndex + 32
-						if endIndex > len(metaFile) {
-							endIndex = len(metaFile)
-						}
-
-						hashChunk := metaFile[fromIndex:endIndex]
-						hashChunkHex := hex.EncodeToString(hashChunk)
-
-						_, found := gossiper.fileContentMap[hashChunkHex]
-
-						if found {
-							chunkMap = append(chunkMap, uint64(fromIndex/32)+1)
-						}
-
-						chunkCount += 1
-						fromIndex = endIndex
-					}
-
-					result := SearchResult{
-						FileName:     file.Name,
-						MetafileHash: file.MetaHash,
-						ChunkMap:     chunkMap,
-						ChunkCount:   chunkCount,
-					}
-					matches = append(matches, &result)
-				}
-			}
-		}
-
-		if gossiper.debug {
-			fmt.Println("__________Found matches ", len(matches), "for search ", request.Keywords)
-		}
-		if len(matches) > 0 {
-			reply := SearchReply{Origin: gossiper.Name, Destination: request.Origin, HopLimit: 10, Results: matches}
-			gossiper.forwardSearchReply(&reply)
-		}
-
-		request.Budget -= 1
-		if request.Budget > 0 {
-			gossiper.redistributeSearchRequest(request)
-		}
-
+		searchRequestHandler(packet, gossiper)
 	} else if packet.SearchReply != nil {
-		reply := packet.SearchReply
-
-		if gossiper.debug {
-			fmt.Printf("__________SearchReply received dest %s origin %s results %v hop-limit %d\n",
-				reply.Destination, reply.Origin, reply.Results, reply.HopLimit)
-		}
-
-		if reply.Destination == gossiper.Name {
-			results := reply.Results
-			if len(results) > 0 {
-				handlerKeys := getSearchHandlerKeys(gossiper.searchAwaitMap, results[0].FileName)
-
-				if len(handlerKeys) > 0 {
-					for _, handlerKey := range handlerKeys {
-						handler, available := gossiper.searchAwaitMap[handlerKey]
-
-						if available {
-							if gossiper.debug {
-								fmt.Println("__________Calling handler found for key ", handlerKey)
-							}
-
-							handler(*reply)
-						}
-					}
-				} else {
-					if gossiper.debug {
-						fmt.Println("__________No handlers found for file name ", results[0].FileName)
-					}
-				}
-
-			}
-		} else {
-			reply.HopLimit -= 1
-			if reply.HopLimit > 0 {
-				gossiper.forwardSearchReply(reply)
-			}
-		}
+		searchReplyHandler(packet, gossiper)
+	} else if packet.TxPublish != nil {
+		txPublishHandler(packet, gossiper)
+	} else if packet.BlockPublish != nil {
+		blockPublishHandler(packet, gossiper)
 	} else {
 		if gossiper.debug {
 			fmt.Println("__________Unexpected gossip packet type.")
 		}
 	}
-}
-
-func getSearchHandlerKeys(searchAwaitMap map[string]func(reply SearchReply), fileName string) (matchingKeys []string) {
-	matchingKeys = []string{}
-
-	for key := range searchAwaitMap {
-		keywords := strings.Split(key, ",")
-		for _, keyword := range keywords {
-			pattern := fmt.Sprintf("^.*%s.*$", regexp.QuoteMeta(keyword))
-			isMatch, _ := regexp.MatchString(pattern, fileName)
-
-			if isMatch {
-				matchingKeys = append(matchingKeys, key)
-			}
-		}
-	}
-	return
 }
 
 func (gossiper *Gossiper) redistributeSearchRequest(request *SearchRequest) {
@@ -1242,8 +1016,36 @@ func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
 		MetaFile: metaFile,
 		MetaHash: metaHash[:],
 	})
+
 	printFileIndexingCompletedLog(fileName, metaHashHex)
+
+	gossiper.txPublishFile(fileName, int64(size), metaHash[:])
+
 	return true
+}
+
+func (gossiper *Gossiper) txPublishFile(fileName string, size int64, metaHash []byte) {
+	for _, tx := range gossiper.publishedTxs {
+		if tx.File.Name == fileName &&
+			tx.File.Size == size &&
+			bytes.Equal(tx.File.MetafileHash, metaHash) {
+			return
+		}
+	}
+
+	_, found := gossiper.fileMetaMap[fileName]
+
+	if found {
+		return
+	}
+
+	txPubFile := File{Name: fileName, Size: int64(size), MetafileHash: metaHash}
+
+	txPub := TxPublish{File: txPubFile, HopLimit: 10}
+
+	gossiper.txChannel <- txPub
+
+	gossiper.broadcast(GossipPacket{TxPublish: &txPub})
 }
 
 func (gossiper *Gossiper) getNextMsgToSend(peerWants []PeerStatus) (gossip GossipPacket) {
@@ -1310,12 +1112,16 @@ func (gossiper *Gossiper) writeToAddr(packet GossipPacket, address string) {
 }
 
 func (gossiper *Gossiper) broadcast(packet GossipPacket) {
-	if packet.Simple.OriginalName == "" {
-		packet.Simple.OriginalName = gossiper.Name
+	relayPeerAddress := ""
+	if packet.Simple != nil {
+		if packet.Simple.OriginalName == "" {
+			packet.Simple.OriginalName = gossiper.Name
+		}
+
+		relayPeerAddress = packet.Simple.RelayPeerAddr
+		packet.Simple.RelayPeerAddr = gossiper.gossipAddress.String()
 	}
 
-	relayPeerAddress := packet.Simple.RelayPeerAddr
-	packet.Simple.RelayPeerAddr = gossiper.gossipAddress.String()
 	for _, peerAddress := range gossiper.Peers {
 		if peerAddress != relayPeerAddress {
 			destinationAddress, _ := net.ResolveUDPAddr("udp", peerAddress)
@@ -1374,5 +1180,304 @@ func (gossiper *Gossiper) executeJobs(wg *sync.WaitGroup) {
 	for {
 		job := <-gossiper.jobsChannel
 		job()
+	}
+}
+
+func (gossiper *Gossiper) executeBlockChainJobs(wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for {
+		event := <-gossiper.blockChainEventLoop
+		event()
+	}
+}
+
+func (gossiper *Gossiper) runBlockChainJobSync(job func()) {
+	done := make(chan bool)
+	gossiper.blockChainEventLoop <- func() {
+		job()
+		done <- true
+	}
+	<-done
+}
+
+func (gossiper *Gossiper) filterPublishedTx(block Block) (filtered []TxPublish) {
+	var filteredTxs []TxPublish
+outer:
+	for _, publishedTx := range gossiper.publishedTxs {
+		for _, receivedTx := range block.Transactions {
+			if publishedTx.File.Name == receivedTx.File.Name {
+				continue outer
+			}
+		}
+		filteredTxs = append(filteredTxs, publishedTx)
+	}
+
+	return filteredTxs
+}
+
+func (gossiper *Gossiper) appendBlock(block Block) {
+	gossiper.publishedTxs = gossiper.filterPublishedTx(block)
+
+	gossiper.blockChain = append(gossiper.blockChain, block)
+	printBlockChainLog(gossiper.blockChain)
+
+	for _, tx := range block.Transactions {
+		file := tx.File
+		gossiper.fileMetaMap[file.Name] = file.MetafileHash
+	}
+}
+
+func (gossiper *Gossiper) clearIfStrayBlock(paramBlock Block) {
+	var newStrayBlockList []Block
+	for _, block := range gossiper.strayBlocks {
+		existingBlockHash := block.Hash()
+		receivedBlockHash := paramBlock.Hash()
+		if !bytes.Equal(existingBlockHash[:], receivedBlockHash[:]) {
+			newStrayBlockList = append(newStrayBlockList, block)
+		}
+	}
+	gossiper.strayBlocks = newStrayBlockList
+}
+
+func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
+	if len(gossiper.blockChain) == 0 {
+		if gossiper.debug {
+			fmt.Println("__________Empty block chain. So appending")
+		}
+		gossiper.appendBlock(receivedBlock)
+		return true
+	} else {
+		headBlockHash := gossiper.blockChain[len(gossiper.blockChain)-1].Hash()
+		receivedBlockPrevHash := receivedBlock.PrevHash
+		// Is it extending the longest chain?
+		if bytes.Equal(headBlockHash[:], receivedBlockPrevHash[:]) {
+			if gossiper.debug {
+				fmt.Println("__________All good. extending the longest chain")
+			}
+			gossiper.appendBlock(receivedBlock)
+			gossiper.clearIfStrayBlock(receivedBlock)
+			return true
+		} else { // Is it extending a shorter chain?
+			if gossiper.debug {
+				fmt.Println("__________Checking if can extend shorter chain")
+			}
+			for index, fork := range gossiper.forks {
+				forkHeadHash := fork[len(fork)-1].Hash()
+				if bytes.Equal(forkHeadHash[:], receivedBlockPrevHash[:]) {
+					if gossiper.debug {
+						fmt.Println("__________Extending a shorter chain")
+					}
+					updatedFork := append(fork, receivedBlock)
+					gossiper.forks[index] = updatedFork
+					gossiper.filterPublishedTx(receivedBlock) // Since no point in mining already mined txs
+					gossiper.clearIfStrayBlock(receivedBlock)
+
+					// Is the chain now longest?
+					if len(updatedFork) > len(gossiper.blockChain) {
+
+						commonIdx := getCommonAncestorIndex(gossiper.blockChain, updatedFork)
+						castOffs := gossiper.blockChain[commonIdx+1:]
+						newJoiners := updatedFork[commonIdx+1:]
+
+						printForkLongerLog(len(castOffs))
+
+						for _, castOff := range castOffs {
+							for _, tx := range castOff.Transactions {
+								delete(gossiper.fileMetaMap, tx.File.Name)
+							}
+						}
+						for _, newJoiner := range newJoiners {
+							for _, tx := range newJoiner.Transactions {
+								gossiper.fileMetaMap[tx.File.Name] = tx.File.MetafileHash
+							}
+						}
+
+						// Remove the fork from the forks list
+						gossiper.forks = append(gossiper.forks[:index], gossiper.forks[index+1:]...)
+						gossiper.blockChain = updatedFork
+						printBlockChainLog(gossiper.blockChain)
+					} else {
+						printForkShorterLog(receivedBlock.Hash())
+					}
+					return true
+				}
+			}
+
+			if gossiper.debug {
+				fmt.Println("__________Checking if a new fork can be made from main chain")
+			}
+			// See if a new fork can be made from the main chain
+			for index, block := range gossiper.blockChain {
+				blockHash := block.Hash()
+				if bytes.Equal(blockHash[:], receivedBlockPrevHash[:]) {
+					fork := gossiper.blockChain[0 : index+1]
+					fork = append(fork, receivedBlock)
+					gossiper.forks = append(gossiper.forks, fork)
+					gossiper.clearIfStrayBlock(receivedBlock)
+					printForkShorterLog(receivedBlock.Hash())
+					gossiper.filterPublishedTx(receivedBlock) // Since no point in mining already mined txs
+					return true
+				}
+			}
+
+			if gossiper.debug {
+				fmt.Println("__________Checking if a new fork can be made from sub chains")
+			}
+
+			// see if a new fork can be made from the existing shorter chains
+			for _, fork := range gossiper.forks {
+				for index, block := range fork {
+					blockHash := block.Hash()
+					if bytes.Equal(blockHash[:], receivedBlockPrevHash[:]) {
+						rootBlocks := fork[0 : index+1]
+						newFork := append(rootBlocks, receivedBlock)
+						gossiper.forks = append(gossiper.forks, newFork)
+						gossiper.clearIfStrayBlock(receivedBlock)
+						printForkShorterLog(receivedBlock.Hash())
+						gossiper.filterPublishedTx(receivedBlock) // Since no point in mining already mined txs
+						return true
+					}
+				}
+			}
+
+			if gossiper.debug {
+				fmt.Println("__________Checking if this is a different first block")
+			}
+			var zeroBytes [32]byte
+			if bytes.Equal(receivedBlock.PrevHash[:], zeroBytes[:]) {
+				newFork := []Block{receivedBlock}
+				gossiper.forks = append(gossiper.forks, newFork)
+				gossiper.clearIfStrayBlock(receivedBlock)
+				printForkShorterLog(receivedBlock.Hash())
+				gossiper.filterPublishedTx(receivedBlock)
+				return true
+			}
+
+			// add to stray block list if not already there
+			for _, block := range gossiper.strayBlocks {
+				blockHash := block.Hash()
+				receivedBlockHash := receivedBlock.Hash()
+				if bytes.Equal(blockHash[:], receivedBlockHash[:]) {
+					return false
+				}
+			}
+
+			if gossiper.debug {
+				fmt.Println("__________Adding block to stray blocks list")
+			}
+
+			gossiper.strayBlocks = append(gossiper.strayBlocks, receivedBlock)
+			return false
+		}
+	}
+}
+
+func isValidBlock(block Block) (valid bool) {
+	hash := block.Hash()
+
+	for _, byteSingle := range hash[:2] {
+		if byteSingle != 0 {
+			return false
+		}
+	}
+
+	if len(block.Transactions) == 0 {
+		return false
+	}
+
+	return true
+}
+
+func (gossiper *Gossiper) processStrayBlocks() {
+	var results []bool
+	for _, block := range gossiper.strayBlocks {
+		result := gossiper.processBlock(block)
+		results = append(results, result)
+	}
+	if atLeastOneTrueExists(results) {
+		gossiper.processStrayBlocks()
+	}
+}
+
+func (gossiper *Gossiper) txChannelListener(wg *sync.WaitGroup) {
+	defer wg.Done()
+	isFirstMinedBlock := true
+
+outer:
+	for {
+		tx := <-gossiper.txChannel
+		for _, existingTx := range gossiper.publishedTxs {
+			if existingTx.File.Name == tx.File.Name {
+				continue outer
+			}
+		}
+		gossiper.publishedTxs = append(gossiper.publishedTxs, tx)
+		if len(gossiper.publishedTxs) == 1 {
+			gossiper.blockChainEventLoop <- func() {
+				go func() {
+					miningStartTimeMillis := time.Now().UnixNano() / 1000000
+					for {
+						if len(gossiper.publishedTxs) == 0 {
+							break
+						}
+
+						var prevBlockHash [32]byte
+
+						if len(gossiper.blockChain) > 0 {
+							prevBlockHash = gossiper.blockChain[len(gossiper.blockChain)-1].Hash()
+						}
+
+						randBytes := make([]byte, 32)
+						rand.Seed(time.Now().UnixNano())
+						_, err := rand.Read(randBytes)
+						if err != nil {
+							fmt.Println("Failed to generate 32byte nonce")
+							return
+						}
+						nonce := sha256.Sum256(randBytes)
+						block := Block{PrevHash: prevBlockHash, Nonce: nonce, Transactions: gossiper.publishedTxs}
+						if isValidBlock(block) {
+							miningEndTimeMillis := time.Now().UnixNano() / 1000000
+							mineTime := miningEndTimeMillis - miningStartTimeMillis
+
+							printSuccessfulMineLog(block.Hash())
+							gossiper.runBlockChainJobSync(func() {
+								gossiper.processBlock(block)
+								gossiper.processStrayBlocks()
+							})
+
+							var ticker *time.Ticker
+							if isFirstMinedBlock {
+								ticker = time.NewTicker(5 * time.Second)
+								if gossiper.debug {
+									fmt.Println("__________Waiting to publish first mined block!")
+								}
+								isFirstMinedBlock = false
+							} else {
+								ticker = time.NewTicker(2 * time.Duration(mineTime) * time.Millisecond)
+								if gossiper.debug {
+									fmt.Println("__________Waiting to publish block!")
+								}
+							}
+							<-ticker.C
+
+							if gossiper.debug {
+								fmt.Printf("__________Publishing mined block! Block hash %x\n", block.Hash())
+							}
+							blockPublish := BlockPublish{Block: block, HopLimit: 20}
+							gossiper.broadcast(GossipPacket{BlockPublish: &blockPublish})
+
+							if len(gossiper.publishedTxs) == 0 {
+								break
+							} else {
+								miningStartTimeMillis = time.Now().UnixNano() / 1000000
+							}
+						}
+					}
+				}()
+			}
+		}
+
 	}
 }
