@@ -1201,7 +1201,7 @@ func (gossiper *Gossiper) runBlockChainJobSync(job func()) {
 	<-done
 }
 
-func (gossiper *Gossiper) filterPublishedTx(block Block) (filtered []TxPublish) {
+func (gossiper *Gossiper) getFilteredPublishedTx(block Block) (filtered []TxPublish) {
 	var filteredTxs []TxPublish
 outer:
 	for _, publishedTx := range gossiper.publishedTxs {
@@ -1217,7 +1217,6 @@ outer:
 }
 
 func (gossiper *Gossiper) appendBlock(block Block) {
-	gossiper.publishedTxs = gossiper.filterPublishedTx(block)
 
 	gossiper.blockChain = append(gossiper.blockChain, block)
 	printBlockChainLog(gossiper.blockChain)
@@ -1241,6 +1240,8 @@ func (gossiper *Gossiper) clearIfStrayBlock(paramBlock Block) {
 }
 
 func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
+	gossiper.publishedTxs = gossiper.getFilteredPublishedTx(receivedBlock) // Since no point in mining already mined txs
+
 	if len(gossiper.blockChain) == 0 {
 		if gossiper.debug {
 			fmt.Println("__________Empty block chain. So appending")
@@ -1270,7 +1271,6 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 					}
 					updatedFork := append(fork, receivedBlock)
 					gossiper.forks[index] = updatedFork
-					gossiper.filterPublishedTx(receivedBlock) // Since no point in mining already mined txs
 					gossiper.clearIfStrayBlock(receivedBlock)
 
 					// Is the chain now longest?
@@ -1294,7 +1294,7 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 						}
 
 						// Remove the fork from the forks list
-						gossiper.forks = append(gossiper.forks[:index], gossiper.forks[index+1:]...)
+						gossiper.forks[index] = gossiper.blockChain
 						gossiper.blockChain = updatedFork
 						printBlockChainLog(gossiper.blockChain)
 					} else {
@@ -1316,7 +1316,6 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 					gossiper.forks = append(gossiper.forks, fork)
 					gossiper.clearIfStrayBlock(receivedBlock)
 					printForkShorterLog(receivedBlock.Hash())
-					gossiper.filterPublishedTx(receivedBlock) // Since no point in mining already mined txs
 					return true
 				}
 			}
@@ -1335,7 +1334,6 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 						gossiper.forks = append(gossiper.forks, newFork)
 						gossiper.clearIfStrayBlock(receivedBlock)
 						printForkShorterLog(receivedBlock.Hash())
-						gossiper.filterPublishedTx(receivedBlock) // Since no point in mining already mined txs
 						return true
 					}
 				}
@@ -1350,7 +1348,6 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 				gossiper.forks = append(gossiper.forks, newFork)
 				gossiper.clearIfStrayBlock(receivedBlock)
 				printForkShorterLog(receivedBlock.Hash())
-				gossiper.filterPublishedTx(receivedBlock)
 				return true
 			}
 
