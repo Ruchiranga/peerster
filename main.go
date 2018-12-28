@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"math/rand"
 	"net"
 	"strings"
@@ -9,12 +10,15 @@ import (
 	"time"
 )
 
+var NodeIDLength int
+
 func main() {
+	NodeIDLength = 8
+
 	DEBUG := false
 
 	uiPort := flag.String("UIPort", "8080", "Port for the UI client")
 	gossipAddress := flag.String("gossipAddr", "127.0.0.1:5000", "ip:port for the gossiper")
-	name := flag.String("name", "node-ruchiranga", "Name of the gossiper")
 	peersString := flag.String("peers", "", "comma separated list of peers of the form ip:port")
 	simple := flag.Bool("simple", false, "run gossiper in simple broadcast mode")
 	rtimer := flag.Int("rtimer", 0, "route rumors sending period in seconds, 0 to disable sending of route rumors")
@@ -26,13 +30,26 @@ func main() {
 		peersList = []string{}
 	} else {
 		peersList = strings.Split(*peersString, ",")
+		uniquePeersList := []string{}
+	outer:
+		for _, peer := range peersList {
+			for _, uniquePeer := range uniquePeersList {
+				if peer == uniquePeer {
+					continue outer
+				}
+			}
+			uniquePeersList = append(uniquePeersList, peer)
+		}
+		peersList = uniquePeersList
 	}
 
-	gossiper := NewGossiper(*gossipAddress, *name, peersList, *uiPort, *simple, *rtimer, DEBUG)
+	fmt.Println("Peers", peersList)
+	gossiper := NewGossiper(*gossipAddress, peersList, *uiPort, *simple, *rtimer, DEBUG)
 
 	var wg sync.WaitGroup
 	wg.Add(6)
 
+	go gossiper.initializePastry()
 	go gossiper.executeJobs(&wg)
 	go gossiper.executeBlockChainJobs(&wg)
 	go gossiper.listenUi(&wg)
@@ -46,7 +63,7 @@ func main() {
 	wg.Wait()
 }
 
-func NewGossiper(address, name string, peers []string, uiPort string, simple bool, rtimer int, debug bool) *Gossiper {
+func NewGossiper(address string, peers []string, uiPort string, simple bool, rtimer int, debug bool) *Gossiper {
 	udpAddr, addrErr := net.ResolveUDPAddr("udp4", address)
 	if addrErr != nil {
 		panic(addrErr)
@@ -56,6 +73,8 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 		panic(connErr)
 	}
 
+	name := generateResourceId()
+	fmt.Printf("My name is %s\n", name)
 	messagesMap := make(map[string][]GenericMessage)
 	ackAwaitMap := make(map[string]func(status StatusPacket))
 	routingTable := make(map[string]string)
@@ -83,6 +102,11 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 		routingTicker = time.NewTicker(time.Duration(rtimer) * time.Second)
 	}
 
+	neighbours := make([]Peer, 0, 8)
+	var pastryRoutingTable [8][4]Peer
+	upperLeafSet := make([]Peer, 0, 4)
+	lowerLeafSet := make([]Peer, 0, 4)
+
 	return &Gossiper{
 		jobsChannel:         jobsChannel,
 		gossipAddress:       udpAddr,
@@ -109,5 +133,9 @@ func NewGossiper(address, name string, peers []string, uiPort string, simple boo
 		blockChainEventLoop: blockChainEventLoop,
 		txChannel:           txChannel,
 		strayBlocks:         strayBlocks,
+		neighbours:          neighbours,
+		pastryRoutingTable:  pastryRoutingTable,
+		upperLeafSet:        upperLeafSet,
+		lowerLeafSet:        lowerLeafSet,
 	}
 }

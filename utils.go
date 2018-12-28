@@ -3,11 +3,12 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"os"
 	"sort"
-	"strings"
+	"strconv"
+	"time"
 )
 
 func printStatusMessageLog(packet GossipPacket, relayPeer string) {
@@ -15,56 +16,56 @@ func printStatusMessageLog(packet GossipPacket, relayPeer string) {
 	for _, peerStatus := range packet.Status.Want {
 		statusStr += fmt.Sprintf(" peer %s nextID %d", peerStatus.Identifier, peerStatus.NextId)
 	}
-	fmt.Printf("%s\n", statusStr)
+	//fmt.Printf("%s\n", statusStr)
 }
 
 func printInSyncLog(relayPeer string) {
-	fmt.Printf("IN SYNC WITH %s\n", relayPeer)
+	//fmt.Printf("IN SYNC WITH %s\n", relayPeer)
 }
 
 func printMongeringWithLog(address string) {
-	fmt.Printf("MONGERING with %s\n", address)
+	//fmt.Printf("MONGERING with %s\n", address)
 }
 
 func printClientMessageLog(message string) {
-	fmt.Printf("CLIENT MESSAGE %s\n", message)
+	//fmt.Printf("CLIENT MESSAGE %s\n", message)
 }
 
 func printPeersLog(peers []string) {
-	fmt.Printf("PEERS %s\n", strings.Join(peers, ","))
+	//fmt.Printf("PEERS %s\n", strings.Join(peers, ","))
 }
 
 func printSimpleMessageLog(message SimpleMessage) {
-	fmt.Printf("SIMPLE MESSAGE origin %s from %s contents %s\n", message.OriginalName, message.RelayPeerAddr, message.Contents)
+	//fmt.Printf("SIMPLE MESSAGE origin %s from %s contents %s\n", message.OriginalName, message.RelayPeerAddr, message.Contents)
 }
 
 func printRumorMessageLog(message RumorMessage, relayPeer string) {
-	fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", message.Origin, relayPeer,
-		message.ID, message.Text)
+	//fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", message.Origin, relayPeer,
+	//	message.ID, message.Text)
 }
 
 func printPrivateMessageLog(message PrivateMessage) {
-	fmt.Printf("PRIVATE origin %s hop-limit %d contents %s\n", message.Origin, message.HopLimit, message.Text)
+	//fmt.Printf("PRIVATE origin %s hop-limit %d contents %s\n", message.Origin, message.HopLimit, message.Text)
 }
 
 func printMetaFileDownloadLog(file string, peer string) {
-	fmt.Printf("DOWNLOADING metafile of %s from %s\n", file, peer)
+	//fmt.Printf("DOWNLOADING metafile of %s from %s\n", file, peer)
 }
 
 func printFileChunkDownloadLog(file string, index int, peer string) {
-	fmt.Printf("DOWNLOADING %s chunk %d from %s\n", file, index, peer)
+	//fmt.Printf("DOWNLOADING %s chunk %d from %s\n", file, index, peer)
 }
 
 func printFileReconstructLog(file string) {
-	fmt.Printf("RECONSTRUCTED file %s\n", file)
+	//fmt.Printf("RECONSTRUCTED file %s\n", file)
 }
 
 func printFileIndexingLog(file string) {
-	fmt.Printf("INDEXING file %s\n", file)
+	//fmt.Printf("INDEXING file %s\n", file)
 }
 
 func printSuccessfulMineLog(hash [32]byte) {
-	fmt.Printf("FOUND-BLOCK %x\n", hash)
+	//fmt.Printf("FOUND-BLOCK %x\n", hash)
 }
 
 func printBlockChainLog(chain []Block) {
@@ -92,31 +93,37 @@ func printBlockChainLog(chain []Block) {
 		}
 	}
 
-	fmt.Println(fmt.Sprintf("CHAIN %s", finalString))
+	//fmt.Println(fmt.Sprintf("CHAIN %s", finalString))
 }
 
 func printSearchFinishedLog() {
-	fmt.Println("SEARCH FINISHED")
+	//fmt.Println("SEARCH FINISHED")
 }
 
 func printForkLongerLog(count int) {
-	fmt.Printf("FORK-LONGER rewind %d blocks\n", count)
+	//fmt.Printf("FORK-LONGER rewind %d blocks\n", count)
 }
 
 func printForkShorterLog(hash [32]byte) {
-	fmt.Printf("FORK-SHORTER %x\n", hash)
+	//fmt.Printf("FORK-SHORTER %x\n", hash)
 }
 
 func printFileIndexingCompletedLog(file string, hash string) {
-	fmt.Printf("INDEXED file %s metahash %s\n", file, hash)
+	//fmt.Printf("INDEXED file %s metahash %s\n", file, hash)
 }
 
 func printCoinFlippedLog(address string) {
-	fmt.Printf("FLIPPED COIN sending rumor to %s\n", address)
+	//fmt.Printf("FLIPPED COIN sending rumor to %s\n", address)
 }
 
 func printDSDVLog(origin string, nextHop string) {
-	fmt.Printf("DSDV %s %s\n", origin, nextHop)
+	//fmt.Printf("DSDV %s %s\n", origin, nextHop)
+}
+
+func (gossiper *Gossiper) printPastryState() {
+	fmt.Println("--------------------------------------------------------------------------------------------------")
+	fmt.Printf("Neighbours %v\nrt %v\nuleaf %v\nlleaf %v\n", gossiper.neighbours, gossiper.pastryRoutingTable, gossiper.upperLeafSet, gossiper.lowerLeafSet)
+	fmt.Println("--------------------------------------------------------------------------------------------------")
 }
 
 func printSearchResultLog(fileName string, origin string, metaHash []byte, chunkMap []uint64) {
@@ -130,7 +137,7 @@ func printSearchResultLog(fileName string, origin string, metaHash []byte, chunk
 		}
 		list = fmt.Sprintf("%s,%d", list, chunk)
 	}
-	fmt.Printf("FOUND match %s at %s metafile=%s chunks=%s\n", fileName, origin, hex.EncodeToString(metaHash), list)
+	//fmt.Printf("FOUND match %s at %s metafile=%s chunks=%s\n", fileName, origin, hex.EncodeToString(metaHash), list)
 }
 
 func getNextWantId(messages []GenericMessage) (nextId uint32) {
@@ -209,4 +216,49 @@ func atLeastOneTrueExists(arr []bool) (exists bool) {
 		}
 	}
 	return false
+}
+
+func isPeerExistingIn(peer Peer, collection []Peer) (exists bool) {
+	for _, item := range collection {
+		if item.Name == peer.Name {
+			return true
+		}
+	}
+	return false
+}
+
+func generateResourceId() (id string) {
+	decimalMax := 65536
+	base := 4
+
+	rand.Seed(time.Now().UnixNano())
+	randNum := rand.Intn(decimalMax)
+	base4Id := strconv.FormatInt(int64(randNum), base)
+
+	if len(base4Id) < NodeIDLength {
+		padCount := NodeIDLength - len(base4Id)
+		padding := "0"
+
+		for len(padding) < padCount {
+			padding = fmt.Sprintf("0%s", padding)
+		}
+		base4Id = fmt.Sprintf("%s%s", padding, base4Id)
+	}
+	return base4Id
+}
+
+func getSharedLength(this string, that string) (length int) {
+	for pos := range this {
+		if this[pos] != that[pos] {
+			return pos
+		}
+	}
+	return len(this)
+}
+
+func Abs(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }

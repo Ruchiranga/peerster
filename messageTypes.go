@@ -35,16 +35,18 @@ type PrivateMessage struct {
 }
 
 type GossipPacket struct {
-	Simple        *SimpleMessage
-	Rumor         *RumorMessage
-	Status        *StatusPacket
-	Private       *PrivateMessage
-	DataRequest   *DataRequest
-	DataReply     *DataReply
-	SearchRequest *SearchRequest
-	SearchReply   *SearchReply
-	TxPublish     *TxPublish
-	BlockPublish  *BlockPublish
+	Simple                *SimpleMessage
+	Rumor                 *RumorMessage
+	Status                *StatusPacket
+	Private               *PrivateMessage
+	DataRequest           *DataRequest
+	DataReply             *DataReply
+	SearchRequest         *SearchRequest
+	SearchReply           *SearchReply
+	TxPublish             *TxPublish
+	BlockPublish          *BlockPublish
+	NeighbourNotification *NeighbourNotification
+	NotificationResponse  *NotificationResponse
 }
 
 type GenericMessage struct {
@@ -108,6 +110,36 @@ type Block struct {
 	PrevHash     [32]byte
 	Nonce        [32]byte
 	Transactions []TxPublish
+}
+
+type NeighbourNotification struct {
+	Origin      string
+	Address     string
+	Destination string
+}
+
+type NotificationResponse struct {
+	Destination  string
+	Origin       string
+	Address      string
+	Neighbors    []Peer
+	Level        int
+	Row          []Peer
+	UpperLeafSet []Peer
+	LowerLeafSet []Peer
+	killThyself  bool
+}
+
+type Peer struct {
+	Name    string
+	Address string
+}
+
+func (peer *Peer) isInitialized() (result bool) {
+	if len(peer.Name) == NodeIDLength && len(peer.Address) > 0 {
+		return true
+	}
+	return false
 }
 
 func (b *Block) Hash() (out [32]byte) {

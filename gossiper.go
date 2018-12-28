@@ -48,6 +48,10 @@ type Gossiper struct {
 	blockChainEventLoop chan func()
 	txChannel           chan TxPublish
 	strayBlocks         []Block
+	neighbours          []Peer
+	pastryRoutingTable  [8][4]Peer
+	upperLeafSet        []Peer
+	lowerLeafSet        []Peer
 }
 
 type FileIndex struct {
@@ -76,7 +80,7 @@ func (gossiper *Gossiper) listenGossip(wg *sync.WaitGroup) {
 	for {
 		var packet GossipPacket
 
-		packetBytes := make([]byte, 16384) // 16KB
+		packetBytes := make([]byte, 65536) // 64KB
 		_, relayPeer, err := gossiper.gossipConn.ReadFromUDP(packetBytes)
 
 		if err != nil {
@@ -319,6 +323,10 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		txPublishHandler(packet, gossiper)
 	} else if packet.BlockPublish != nil {
 		blockPublishHandler(packet, gossiper)
+	} else if packet.NeighbourNotification != nil {
+		neighbourNotificationHandler(packet, gossiper)
+	} else if packet.NotificationResponse != nil {
+		notificationResponseHandler(packet, gossiper)
 	} else {
 		if gossiper.debug {
 			fmt.Println("__________Unexpected gossip packet type.")
@@ -438,6 +446,45 @@ func (gossiper *Gossiper) forwardSearchReply(reply *SearchReply) (success bool) 
 		if gossiper.debug {
 			fmt.Printf("__________Failed to forward search reply. Next hop for %s not found.\n", reply.Destination)
 		}
+		return false
+	}
+
+}
+
+func (gossiper *Gossiper) forwardNeighbourNotification(notification *NeighbourNotification) (success bool) {
+	address, found := gossiper.routingTable[notification.Destination]
+	if found {
+		packet := GossipPacket{NeighbourNotification: notification}
+		gossiper.writeToAddr(packet, address)
+
+		if gossiper.debug {
+			fmt.Printf("__________Forwarded notification with origin %s dest %s to %s\n", notification.Origin, notification.Destination, address)
+		}
+		return true
+	} else {
+		if gossiper.debug {
+			fmt.Printf("__________Failed to forward search reply. Next hop for %s not found.\n", notification.Destination)
+		}
+		return false
+	}
+
+}
+
+func (gossiper *Gossiper) forwardNotificationResponse(response *NotificationResponse) (success bool) {
+	address, found := gossiper.routingTable[response.Destination]
+	if found {
+		packet := GossipPacket{NotificationResponse: response}
+
+		gossiper.writeToAddr(packet, address)
+
+		if gossiper.debug {
+			fmt.Printf("__________Forwarded notification response %v with dest %s to %s\n", response, response.Destination, address)
+		}
+		return true
+	} else {
+		//if gossiper.debug {
+		fmt.Printf("__________Failed to forward search reply. Next hop for %s not found.\n", response.Destination)
+		//}
 		return false
 	}
 
@@ -1152,6 +1199,27 @@ func (gossiper *Gossiper) doAntiEntropy(wg *sync.WaitGroup) {
 	}
 }
 
+func (gossiper *Gossiper) notifyANeighbour() {
+	gossiper.jobsChannel <- func() {
+		if len(gossiper.Peers) == 1 && gossiper.Peers[0] == gossiper.gossipAddress.String() {
+			fmt.Println("i have only one and its me")
+			return
+		} else {
+
+			// Quick fix for test script giving out oneself as ones peer
+			randomPeerIdx := gossiper.randGen.Intn(len(gossiper.Peers))
+			for gossiper.Peers[randomPeerIdx] == gossiper.gossipAddress.String() {
+				randomPeerIdx = gossiper.randGen.Intn(len(gossiper.Peers))
+			}
+
+			notification := NeighbourNotification{Origin: gossiper.Name, Address: gossiper.gossipAddress.String()}
+			gossipPacket := GossipPacket{NeighbourNotification: &notification}
+			fmt.Printf("Notifying %s\n", gossiper.Peers[randomPeerIdx])
+			gossiper.writeToAddr(gossipPacket, gossiper.Peers[randomPeerIdx])
+		}
+	}
+}
+
 func (gossiper *Gossiper) announceRoutes(wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer gossiper.routingTicker.Stop()
@@ -1476,5 +1544,12 @@ outer:
 			}
 		}
 
+	}
+}
+
+func (gossiper *Gossiper) initializePastry() {
+	if len(gossiper.Peers) > 0 {
+		<-time.After(3 * time.Second)
+		gossiper.notifyANeighbour()
 	}
 }

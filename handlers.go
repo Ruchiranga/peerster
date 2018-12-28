@@ -4,10 +4,305 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
+
+func neighbourNotificationHandler(packet GossipPacket, gossiper *Gossiper) {
+	notification := packet.NeighbourNotification
+	fmt.Println("Notification received", notification)
+	if notification.Destination == gossiper.Name || notification.Destination == "" {
+		sharedLength := getSharedLength(gossiper.Name, notification.Origin)
+		fmt.Printf("shared length %d\n", sharedLength)
+		var response NotificationResponse
+
+		if sharedLength == NodeIDLength {
+			response = NotificationResponse{
+				Destination: notification.Origin,
+				killThyself: true,
+			}
+			fmt.Println("Forwarding kill thyself response")
+			gossiper.forwardNotificationResponse(&response)
+			return
+		} else {
+			response = NotificationResponse{
+				Origin:      gossiper.Name,
+				Address:     gossiper.gossipAddress.String(),
+				Level:       sharedLength,
+				Row:         gossiper.pastryRoutingTable[sharedLength][:],
+				Destination: notification.Origin,
+			}
+
+			nextDestination := getNumericallyClosestId(notification.Origin, gossiper)
+			if nextDestination == gossiper.Name {
+				fmt.Println("Notification is destined for me!. Including my leaf set in response")
+				response.UpperLeafSet = gossiper.upperLeafSet
+				response.LowerLeafSet = gossiper.lowerLeafSet
+			} else {
+				if nextDestination != "" {
+					notification.Destination = nextDestination
+					fmt.Printf("Forwarding notification to next dest %s\n", nextDestination)
+					gossiper.forwardNeighbourNotification(notification)
+				} else {
+					fmt.Println("Next destination not found!")
+				}
+
+			}
+
+			if sharedLength == 0 {
+				response.Neighbors = gossiper.neighbours
+			}
+
+			fmt.Println("Forwarding response", response)
+			gossiper.forwardNotificationResponse(&response)
+		}
+
+		if notification.Origin != gossiper.Name {
+			storePeerInState(Peer{Name: notification.Origin, Address: notification.Address}, gossiper)
+			gossiper.printPastryState()
+		}
+	} else {
+		fmt.Println("Not for me. Passing on.")
+		gossiper.forwardNeighbourNotification(notification)
+	}
+
+}
+
+func storePeerInState(peer Peer, gossiper *Gossiper) {
+	if peer.Name == gossiper.Name {
+		fmt.Println("In storePeerInState, passed peer is me. returning.")
+		return
+	}
+
+	// Check if this is a neighbour
+	for _, peerAddress := range gossiper.Peers {
+		if peerAddress == peer.Address && len(gossiper.neighbours) < cap(gossiper.neighbours) {
+			peerExists := isPeerExistingIn(peer, gossiper.neighbours)
+			if !peerExists {
+				gossiper.neighbours = append(gossiper.neighbours, peer)
+			} else {
+				fmt.Println("Peer already exists in neighbours", peer)
+			}
+		}
+	}
+
+	// Check if it can go into routing table
+	sharedLength := getSharedLength(gossiper.Name, peer.Name)
+	nameChar := string(peer.Name[sharedLength])
+	nameCharVal, _ := strconv.ParseInt(nameChar, 4, 0)
+	routingNode := gossiper.pastryRoutingTable[sharedLength][nameCharVal]
+	if !routingNode.isInitialized() {
+		gossiper.pastryRoutingTable[sharedLength][nameCharVal] = peer
+	}
+
+	// Check if it can go to leaf set
+	peerNameVal, _ := strconv.ParseInt(peer.Name, 4, 0)
+	thisNodeNameVal, _ := strconv.ParseInt(gossiper.Name, 4, 0)
+
+	if peerNameVal > thisNodeNameVal {
+		peerExists := isPeerExistingIn(peer, gossiper.upperLeafSet)
+		if !peerExists {
+			if len(gossiper.upperLeafSet) < cap(gossiper.upperLeafSet) {
+				gossiper.upperLeafSet = append(gossiper.upperLeafSet, peer)
+			} else {
+				sort.Slice(gossiper.upperLeafSet, func(i, j int) bool {
+					iVal, _ := strconv.ParseInt(gossiper.upperLeafSet[i].Name, 4, 0)
+					jVal, _ := strconv.ParseInt(gossiper.upperLeafSet[j].Name, 4, 0)
+					return iVal < jVal
+				})
+				largestLeaf := gossiper.upperLeafSet[len(gossiper.upperLeafSet)-1]
+				largestLeafVal, _ := strconv.ParseInt(largestLeaf.Name, 4, 0)
+
+				if peerNameVal < largestLeafVal {
+					gossiper.upperLeafSet[len(gossiper.upperLeafSet)-1] = peer
+				}
+			}
+		} else {
+			fmt.Println("Peer already exists in upper leaf set")
+		}
+	} else if peerNameVal < thisNodeNameVal {
+		peerExists := isPeerExistingIn(peer, gossiper.lowerLeafSet)
+		if !peerExists {
+			if len(gossiper.lowerLeafSet) < cap(gossiper.lowerLeafSet) {
+				gossiper.lowerLeafSet = append(gossiper.lowerLeafSet, peer)
+			} else {
+				sort.Slice(gossiper.lowerLeafSet, func(i, j int) bool {
+					iVal, _ := strconv.ParseInt(gossiper.lowerLeafSet[i].Name, 4, 0)
+					jVal, _ := strconv.ParseInt(gossiper.lowerLeafSet[j].Name, 4, 0)
+					return iVal < jVal
+				})
+				smallestLeaf := gossiper.lowerLeafSet[0]
+				smallestLeafVal, _ := strconv.ParseInt(smallestLeaf.Name, 4, 0)
+
+				if peerNameVal > smallestLeafVal {
+					gossiper.lowerLeafSet[0] = peer
+				}
+			}
+		} else {
+			fmt.Println("Peer already exists in lower leaf set")
+		}
+	} else {
+		fmt.Println("Same node name value. Cannot happen!")
+	}
+}
+
+func getNumericallyClosestId(name string, gossiper *Gossiper) (closestId string) {
+	closestId = gossiper.Name
+
+	nameVal, _ := strconv.ParseInt(name, 4, 0)
+	thisNodeNameVal, _ := strconv.ParseInt(gossiper.Name, 4, 0)
+
+	leafSet := append(gossiper.lowerLeafSet, gossiper.upperLeafSet...)
+
+	if len(leafSet) > 1 {
+		sort.Slice(leafSet, func(i, j int) bool {
+			iVal, _ := strconv.ParseInt(leafSet[i].Name, 4, 0)
+			jVal, _ := strconv.ParseInt(leafSet[j].Name, 4, 0)
+			return iVal < jVal
+		})
+		minLeaf := leafSet[0]
+		maxLeaf := leafSet[len(leafSet)-1]
+
+		minLeafVal, _ := strconv.ParseInt(minLeaf.Name, 4, 0)
+		maxLeafVal, _ := strconv.ParseInt(maxLeaf.Name, 4, 0)
+
+		fmt.Println("Full sorted leafset", leafSet)
+		fmt.Println("Min leaf & val", minLeaf, minLeafVal)
+		fmt.Println("Max leaf & val", maxLeaf, maxLeafVal)
+		fmt.Println("Incoming node & val", name, nameVal)
+
+		leastDif := int64(65535)
+
+		if nameVal > minLeafVal && nameVal < maxLeafVal {
+			for _, leaf := range leafSet {
+				leafVal, _ := strconv.ParseInt(leaf.Name, 4, 0)
+				dif := Abs(leafVal - nameVal)
+				if dif < leastDif {
+					leastDif = dif
+					closestId = leaf.Name
+				}
+			}
+
+			dif := Abs(thisNodeNameVal - nameVal)
+			// If this node is the closest
+			if dif < leastDif {
+				fmt.Println("I am the closest among leafs")
+				fmt.Println("Last least dif", leastDif)
+				fmt.Println("My dif", dif)
+				closestId = gossiper.Name
+			} else {
+				fmt.Println("Picked closest id from leafs")
+			}
+			return
+		}
+	}
+
+	sharedLength := getSharedLength(gossiper.Name, name)
+	nameChar := string(name[sharedLength])
+	nameCharVal, _ := strconv.ParseInt(nameChar, 4, 0)
+	routingNode := gossiper.pastryRoutingTable[sharedLength][nameCharVal]
+	if routingNode.isInitialized() {
+		closestId = routingNode.Name
+		fmt.Println("Picked closest id from routing table")
+		return
+	} else {
+		for _, leaf := range gossiper.lowerLeafSet {
+			leafVal, _ := strconv.ParseInt(leaf.Name, 4, 0)
+			if getSharedLength(leaf.Name, name) >= sharedLength && Abs(thisNodeNameVal-nameVal) > Abs(leafVal-nameVal) {
+				closestId = leaf.Name
+				fmt.Println("Closest ID from Last resort. From lowerleafset")
+				return
+			}
+		}
+
+		for _, leaf := range gossiper.upperLeafSet {
+			leafVal, _ := strconv.ParseInt(leaf.Name, 4, 0)
+			if getSharedLength(leaf.Name, name) >= sharedLength && Abs(thisNodeNameVal-nameVal) > Abs(leafVal-nameVal) {
+				closestId = leaf.Name
+				fmt.Println("Closest ID from Last resort. From upperleafset")
+				return
+			}
+		}
+
+		for oi := range gossiper.pastryRoutingTable {
+			for ii := range gossiper.pastryRoutingTable[oi] {
+				node := gossiper.pastryRoutingTable[oi][ii]
+				if node.isInitialized() {
+					nodeVal, _ := strconv.ParseInt(node.Name, 4, 0)
+					if getSharedLength(node.Name, name) >= sharedLength && Abs(thisNodeNameVal-nameVal) > Abs(nodeVal-nameVal) {
+						closestId = node.Name
+						fmt.Println("Closest ID from Last resort. From routing table")
+						return
+					}
+				}
+			}
+		}
+
+		for _, node := range gossiper.neighbours {
+			nodeVal, _ := strconv.ParseInt(node.Name, 4, 0)
+			if getSharedLength(node.Name, name) >= sharedLength && Abs(thisNodeNameVal-nameVal) > Abs(nodeVal-nameVal) {
+				closestId = node.Name
+				fmt.Println("Closest ID from Last resort. From neighbours")
+
+				return
+			}
+		}
+	}
+	fmt.Println("Closest ID not found. Returning myself")
+
+	return
+}
+
+func notificationResponseHandler(packet GossipPacket, gossiper *Gossiper) {
+	response := packet.NotificationResponse
+	fmt.Println("Res recevied ", *response)
+	if response.killThyself {
+		// Chosen ID non unique. Killing.
+		fmt.Println("Chosen ID non unique. Killing myself :( ")
+		os.Exit(3)
+	}
+
+	if response.Destination == gossiper.Name {
+		if response.Row != nil {
+			for _, entry := range response.Row {
+				if entry.isInitialized() {
+					storePeerInState(entry, gossiper)
+				}
+			}
+		} else {
+			fmt.Println("Response Row is nil. Should not happen!")
+		}
+
+		if response.Neighbors != nil {
+			for _, theirNeighbour := range response.Neighbors {
+				storePeerInState(theirNeighbour, gossiper)
+			}
+		}
+		if response.UpperLeafSet != nil {
+			for _, theirLeaf := range response.UpperLeafSet {
+				storePeerInState(theirLeaf, gossiper)
+			}
+		}
+		if response.LowerLeafSet != nil {
+			for _, theirLeaf := range response.LowerLeafSet {
+				storePeerInState(theirLeaf, gossiper)
+			}
+		}
+
+		if response.Origin != gossiper.Name {
+			storePeerInState(Peer{Name: response.Origin, Address: response.Address}, gossiper)
+			gossiper.printPastryState()
+		}
+	} else {
+		fmt.Println("Not for me. Passing on.")
+		gossiper.forwardNotificationResponse(response)
+	}
+
+}
 
 func rumorHandler(packet GossipPacket, relayPeer string, gossiper *Gossiper) {
 	printRumorMessageLog(*packet.Rumor, relayPeer)
