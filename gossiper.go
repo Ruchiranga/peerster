@@ -20,38 +20,40 @@ import (
 )
 
 type Gossiper struct {
-	jobsChannel         chan func()
-	gossipAddress       *net.UDPAddr
-	gossipConn          *net.UDPConn
-	uiPort              string
-	Name                string
-	simple              bool
-	Peers               []string
-	ackAwaitMap         map[string]func(status StatusPacket)
-	fileAwaitMap        map[string]func(reply DataReply)
-	searchAwaitMap      map[string]func(reply SearchReply)
-	messagesMap         map[string][]GenericMessage
-	routingTable        map[string]string
-	randGen             *rand.Rand
-	debug               bool
-	entropyTicker       *time.Ticker
-	routingTicker       *time.Ticker
-	fileList            []FileIndex
-	fileContentMap      map[string][]byte
-	currentDownloads    map[string][]byte
-	lastSearchRequest   map[string]int64
-	searchResults       map[string]map[uint64][]string
-	fileMetaMap         map[string][]byte
-	blockChain          []Block
-	publishedTxs        []TxPublish
-	forks               [][]Block
-	blockChainEventLoop chan func()
-	txChannel           chan TxPublish
-	strayBlocks         []Block
-	neighbours          []Peer
-	pastryRoutingTable  [8][4]Peer
-	upperLeafSet        []Peer
-	lowerLeafSet        []Peer
+	jobsChannel              chan func()
+	gossipAddress            *net.UDPAddr
+	gossipConn               *net.UDPConn
+	uiPort                   string
+	Name                     string
+	simple                   bool
+	Peers                    []string
+	ackAwaitMap              map[string]func(status StatusPacket)
+	fileAwaitMap             map[string]func(reply DataReply)
+	searchAwaitMap           map[string]func(reply SearchReply)
+	messagesMap              map[string][]GenericMessage
+	routingTable             map[string]string
+	randGen                  *rand.Rand
+	debug                    bool
+	entropyTicker            *time.Ticker
+	routingTicker            *time.Ticker
+	fileList                 []FileIndex
+	fileContentMap           map[string][]byte
+	currentDownloads         map[string][]byte
+	lastSearchRequest        map[string]int64
+	searchResults            map[string]map[uint64][]string
+	fileMetaMap              map[string][]byte
+	blockChain               []Block
+	publishedTxs             []TxPublish
+	forks                    [][]Block
+	blockChainEventLoop      chan func()
+	txChannel                chan TxPublish
+	strayBlocks              []Block
+	neighbours               []Peer
+	pastryRoutingTable       [8][4]Peer
+	upperLeafSet             []Peer
+	lowerLeafSet             []Peer
+	fileReplicateAwaitMap    map[string]func(ack FileReplicateAck)
+	fileReplicatedTargetsMap map[string][]string
 }
 
 type FileIndex struct {
@@ -327,6 +329,10 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		neighbourNotificationHandler(packet, gossiper)
 	} else if packet.NotificationResponse != nil {
 		notificationResponseHandler(packet, gossiper)
+	} else if packet.FilePullRequest != nil {
+		filePullRequestHandler(packet, gossiper)
+	} else if packet.FileReplicateAck != nil {
+		fileReplicateAckHandler(packet, gossiper)
 	} else {
 		if gossiper.debug {
 			fmt.Println("__________Unexpected gossip packet type.")
@@ -451,7 +457,7 @@ func (gossiper *Gossiper) forwardSearchReply(reply *SearchReply) (success bool) 
 
 }
 
-func (gossiper *Gossiper) forwardNeighbourNotification(notification *NeighbourNotification) (success bool) {
+func (gossiper *Gossiper) forwardNeighbourNotification(notification *NeighbourNotification, attempt int) (success bool) {
 	address, found := gossiper.routingTable[notification.Destination]
 	if found {
 		packet := GossipPacket{NeighbourNotification: notification}
@@ -463,14 +469,29 @@ func (gossiper *Gossiper) forwardNeighbourNotification(notification *NeighbourNo
 		return true
 	} else {
 		if gossiper.debug {
-			fmt.Printf("__________Failed to forward search reply. Next hop for %s not found.\n", notification.Destination)
+			fmt.Printf("__________Failed to forward neighbour notification. Next hop for %s not found.\n", notification.Destination)
+		}
+		if attempt < 6 {
+			go func() {
+				<-time.After(5 * time.Second)
+				if gossiper.debug {
+					fmt.Println("__________Retrying forwarding neighbour notification. Checking for next hop", notification.Destination)
+				}
+				gossiper.jobsChannel <- func() {
+					gossiper.forwardNeighbourNotification(notification, attempt+1)
+				}
+			}()
+		} else {
+			if gossiper.debug {
+				fmt.Printf("__________Retried forwarding neighbour notification 5 times. Next hop for %s not found. Giving up.\n ", notification.Destination)
+			}
 		}
 		return false
 	}
 
 }
 
-func (gossiper *Gossiper) forwardNotificationResponse(response *NotificationResponse) (success bool) {
+func (gossiper *Gossiper) forwardNotificationResponse(response *NotificationResponse, attempt int) (success bool) {
 	address, found := gossiper.routingTable[response.Destination]
 	if found {
 		packet := GossipPacket{NotificationResponse: response}
@@ -482,9 +503,93 @@ func (gossiper *Gossiper) forwardNotificationResponse(response *NotificationResp
 		}
 		return true
 	} else {
-		//if gossiper.debug {
-		fmt.Printf("__________Failed to forward search reply. Next hop for %s not found.\n", response.Destination)
-		//}
+		if gossiper.debug {
+			fmt.Printf("__________Failed to forward notification respons. Next hop for %s not found.\n", response.Destination)
+		}
+		if attempt < 6 {
+			go func() {
+				<-time.After(5 * time.Second)
+				if gossiper.debug {
+					fmt.Println("__________Retrying forwarding neighbour response. Checking for next hop", response.Destination)
+				}
+				gossiper.jobsChannel <- func() {
+					gossiper.forwardNotificationResponse(response, attempt+1)
+				}
+			}()
+		} else {
+			if gossiper.debug {
+				fmt.Printf("__________Retried forwarding neighbour response 5 times. Next hop for %s not found. Giving up.\n ", response.Destination)
+			}
+		}
+
+		return false
+	}
+
+}
+
+func (gossiper *Gossiper) forwardFilePullRequest(pullRequest *FilePullRequest, attempt int) (success bool) {
+	address, found := gossiper.routingTable[pullRequest.Destination]
+	if found {
+		packet := GossipPacket{FilePullRequest: pullRequest}
+		gossiper.writeToAddr(packet, address)
+
+		if gossiper.debug {
+			fmt.Printf("__________Forwarded pull request with hash %x dest %s to %s\n", pullRequest.HashValue, pullRequest.Destination, address)
+		}
+		return true
+	} else {
+		if gossiper.debug {
+			fmt.Printf("__________Failed to forward pull request. Next hop for %s not found.\n", pullRequest.Destination)
+		}
+		if attempt < 2 {
+			go func() {
+				<-time.After(5 * time.Second)
+				if gossiper.debug {
+					fmt.Println("__________Retrying forwarding pull request. Checking for next hop", pullRequest.Destination)
+				}
+				gossiper.jobsChannel <- func() {
+					gossiper.forwardFilePullRequest(pullRequest, attempt+1)
+				}
+			}()
+		} else {
+			if gossiper.debug {
+				fmt.Printf("__________Retried PR 2 times. Next hop for %s not found. Giving up.\n ", pullRequest.Destination)
+			}
+		}
+		return false
+	}
+
+}
+
+func (gossiper *Gossiper) forwardFileReplicateAck(ack *FileReplicateAck, attempt int) (success bool) {
+	address, found := gossiper.routingTable[ack.Destination]
+	if found {
+		packet := GossipPacket{FileReplicateAck: ack}
+		gossiper.writeToAddr(packet, address)
+
+		if gossiper.debug {
+			fmt.Printf("__________Forwarded file replicate ack with hash %x dest %s to %s\n", ack.HashValue, ack.Destination, address)
+		}
+		return true
+	} else {
+		if gossiper.debug {
+			fmt.Printf("__________Failed to forward file replicate ack. Next hop for %s not found.\n", ack.Destination)
+		}
+		if attempt < 5 {
+			go func() {
+				<-time.After(5 * time.Second)
+				if gossiper.debug {
+					fmt.Println("__________Retrying forwarding replicate ack. Checking for next hop", ack.Destination)
+				}
+				gossiper.jobsChannel <- func() {
+					gossiper.forwardFileReplicateAck(ack, attempt+1)
+				}
+			}()
+		} else {
+			if gossiper.debug {
+				fmt.Printf("__________Retried frowarding replicate ack 5 times. Next hop for %s not found. Giving up.\n ", ack.Destination)
+			}
+		}
 		return false
 	}
 
@@ -1066,9 +1171,77 @@ func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
 
 	printFileIndexingCompletedLog(fileName, metaHashHex)
 
+	gossiper.sendPullRequests(metaHash[:], fileName, 5)
 	gossiper.txPublishFile(fileName, int64(size), metaHash[:])
 
 	return true
+}
+
+func (gossiper *Gossiper) sendPullRequests(metaHash []byte, fileName string, replicationCount int) {
+	hashChunkHex := hex.EncodeToString(metaHash)
+	if replicationCount == 0 {
+		printReplicationCompleteLog(gossiper.fileReplicatedTargetsMap[hashChunkHex])
+		return
+	}
+
+	ackChan := make(chan FileReplicateAck)
+
+	gossiper.fileReplicateAwaitMap[hashChunkHex] = func(ack FileReplicateAck) {
+		select {
+		case ackChan <- ack:
+		default:
+		}
+	}
+
+	randomId := generateResourceId()
+	closestId := getNumericallyClosestId(randomId, gossiper)
+	pullRequest := FilePullRequest{Origin: gossiper.Name, Destination: closestId, HashValue: metaHash, FileName: fileName, FileId: randomId}
+	if gossiper.debug {
+		fmt.Printf("__________Sending pull request for file ID %s to %s\n", randomId, closestId)
+	}
+	gossiper.forwardFilePullRequest(&pullRequest, 0)
+
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		var ackPtr *FileReplicateAck
+		ackPtr = nil
+		select {
+		case ack := <-ackChan:
+			ackPtr = &ack
+		case <-ticker.C:
+		}
+
+		gossiper.jobsChannel <- func() {
+			close(ackChan)
+			delete(gossiper.fileReplicateAwaitMap, hashChunkHex)
+			ticker.Stop()
+
+			if ackPtr != nil {
+				if gossiper.debug {
+					fmt.Println("__________Received a valid ack", *ackPtr)
+				}
+
+				//check if the target has recurred
+				targets, found := gossiper.fileReplicatedTargetsMap[hashChunkHex]
+				if found {
+					for _, target := range targets {
+						if target == ackPtr.Origin {
+							gossiper.sendPullRequests(metaHash, fileName, replicationCount)
+							return
+						}
+					}
+					gossiper.fileReplicatedTargetsMap[hashChunkHex] = append(gossiper.fileReplicatedTargetsMap[hashChunkHex], ackPtr.Origin)
+				} else {
+					ts := []string{ackPtr.Origin}
+					gossiper.fileReplicatedTargetsMap[hashChunkHex] = ts
+				}
+
+				gossiper.sendPullRequests(metaHash, fileName, replicationCount-1)
+				return
+			}
+			gossiper.sendPullRequests(metaHash, fileName, replicationCount)
+		}
+	}()
 }
 
 func (gossiper *Gossiper) txPublishFile(fileName string, size int64, metaHash []byte) {

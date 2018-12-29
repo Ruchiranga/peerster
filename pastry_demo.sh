@@ -3,7 +3,7 @@
 declare -a AddressList
 declare -a LiveList
 
-nodeCount=30
+nodeCount=25
 
 gossipPort=5000
 
@@ -52,18 +52,19 @@ do
 
 
 	gossipAddr="127.0.0.1:$gossipPort"
-	./Peerster -UIPort=$UIPort -gossipAddr=$gossipAddr -rtimer=1 -peers=$peersString > "logs/$outFileName" &
+	./Peerster -UIPort=$UIPort -gossipAddr=$gossipAddr -rtimer=5 -peers=$peersString > "logs/$outFileName" &
 	LiveList+=(${gossipAddr})
 	UIPort=$(($UIPort+1))
 	gossipPort=$(($gossipPort+1))
 
-    sleepTime=$(($((${#LiveList[@]}/5+1)) * 5))
+    sleepTime=$(($((${#LiveList[@]}/10+1)) * 5))
     printf 'sleeping %d\n' $sleepTime;
 	sleep $sleepTime
 #    read
 done
 
-sleep 300
+#sleep 300
+read
 pkill -f Peerster
 #num1="$(($num1+$num2))"
 #

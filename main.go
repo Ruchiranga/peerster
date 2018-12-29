@@ -85,6 +85,8 @@ func NewGossiper(address string, peers []string, uiPort string, simple bool, rti
 	lastSearchRequest := make(map[string]int64)
 	searchResults := make(map[string]map[uint64][]string)
 	fileMetaMap := make(map[string][]byte)
+	fileReplicateAwaitMap := make(map[string]func(ack FileReplicateAck))
+	fileReplicatedTargetsMap := make(map[string][]string)
 	// Jobs channel length did not seem to exceed 10 items even at high loads.
 	// Hence a value of 20 is given keeping a buffer.
 	jobsChannel := make(chan func(), 20)
@@ -108,34 +110,36 @@ func NewGossiper(address string, peers []string, uiPort string, simple bool, rti
 	lowerLeafSet := make([]Peer, 0, 4)
 
 	return &Gossiper{
-		jobsChannel:         jobsChannel,
-		gossipAddress:       udpAddr,
-		gossipConn:          udpConn,
-		Name:                name,
-		Peers:               peers,
-		uiPort:              uiPort,
-		simple:              simple,
-		ackAwaitMap:         ackAwaitMap,
-		messagesMap:         messagesMap,
-		routingTable:        routingTable,
-		randGen:             randGen,
-		debug:               debug,
-		entropyTicker:       entropyTicker,
-		routingTicker:       routingTicker,
-		fileContentMap:      fileContentMap,
-		fileAwaitMap:        fileAwaitMap,
-		searchAwaitMap:      searchAwaitMap,
-		currentDownloads:    currentDownloads,
-		lastSearchRequest:   lastSearchRequest,
-		searchResults:       searchResults,
-		fileMetaMap:         fileMetaMap,
-		forks:               forks,
-		blockChainEventLoop: blockChainEventLoop,
-		txChannel:           txChannel,
-		strayBlocks:         strayBlocks,
-		neighbours:          neighbours,
-		pastryRoutingTable:  pastryRoutingTable,
-		upperLeafSet:        upperLeafSet,
-		lowerLeafSet:        lowerLeafSet,
+		jobsChannel:              jobsChannel,
+		gossipAddress:            udpAddr,
+		gossipConn:               udpConn,
+		Name:                     name,
+		Peers:                    peers,
+		uiPort:                   uiPort,
+		simple:                   simple,
+		ackAwaitMap:              ackAwaitMap,
+		messagesMap:              messagesMap,
+		routingTable:             routingTable,
+		randGen:                  randGen,
+		debug:                    debug,
+		entropyTicker:            entropyTicker,
+		routingTicker:            routingTicker,
+		fileContentMap:           fileContentMap,
+		fileAwaitMap:             fileAwaitMap,
+		searchAwaitMap:           searchAwaitMap,
+		currentDownloads:         currentDownloads,
+		lastSearchRequest:        lastSearchRequest,
+		searchResults:            searchResults,
+		fileMetaMap:              fileMetaMap,
+		forks:                    forks,
+		blockChainEventLoop:      blockChainEventLoop,
+		txChannel:                txChannel,
+		strayBlocks:              strayBlocks,
+		neighbours:               neighbours,
+		pastryRoutingTable:       pastryRoutingTable,
+		upperLeafSet:             upperLeafSet,
+		lowerLeafSet:             lowerLeafSet,
+		fileReplicateAwaitMap:    fileReplicateAwaitMap,
+		fileReplicatedTargetsMap: fileReplicatedTargetsMap,
 	}
 }

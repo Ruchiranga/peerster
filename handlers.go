@@ -12,12 +12,91 @@ import (
 	"time"
 )
 
+func fileReplicateAckHandler(packet GossipPacket, gossiper *Gossiper) {
+	ack := packet.FileReplicateAck
+	if gossiper.debug {
+		fmt.Println("__________Received file replicate ack", ack)
+	}
+	if ack.Destination == gossiper.Name {
+		handler, available := gossiper.fileReplicateAwaitMap[hex.EncodeToString(ack.HashValue)]
+		if available {
+			if gossiper.debug {
+				fmt.Println("__________Calling handle found for hash ", ack.HashValue)
+			}
+
+			handler(*ack)
+		} else {
+			if gossiper.debug {
+				fmt.Println("__________Got file replicate ack but no handler found")
+			}
+		}
+	} else {
+		if gossiper.debug {
+			fmt.Println("__________Ack not for me. passing on.")
+		}
+		gossiper.forwardFileReplicateAck(ack, 0)
+	}
+}
+
+func filePullRequestHandler(packet GossipPacket, gossiper *Gossiper) {
+	pullRequest := packet.FilePullRequest
+	if gossiper.debug {
+		fmt.Println("__________File Pull Request received", pullRequest)
+	}
+
+	if pullRequest.Destination == gossiper.Name {
+		if gossiper.debug {
+			fmt.Println("__________PR is for me. Checking next dest")
+		}
+		nextDestination := getNumericallyClosestId(pullRequest.FileId, gossiper)
+		if nextDestination == gossiper.Name {
+			if gossiper.debug {
+				fmt.Println("__________Pull request destined for me. Initiating file download")
+			}
+			statusChan := make(chan bool)
+			metaHashHex := hex.EncodeToString(pullRequest.HashValue)
+			fileName := fmt.Sprintf("%s-replicate-%s", pullRequest.FileName, gossiper.Name)
+			gossiper.requestFile(metaHashHex, pullRequest.Origin, fileName, statusChan)
+			go func() {
+				status := <-statusChan
+				if status {
+					printReplicateDownloadSuccessLog(pullRequest.FileName, metaHashHex)
+					ack := FileReplicateAck{Destination: pullRequest.Origin, HashValue: pullRequest.HashValue, Origin: gossiper.Name}
+					if gossiper.debug {
+						fmt.Println("__________Sending back file replicate ack for", pullRequest.FileName)
+					}
+					gossiper.forwardFileReplicateAck(&ack, 0)
+				} else {
+					if gossiper.debug {
+						fmt.Println("__________File downloaded failed")
+					}
+				}
+			}()
+		} else {
+			if gossiper.debug {
+				fmt.Println("__________Forwarded PR to", nextDestination)
+			}
+			pullRequest.Destination = nextDestination
+			gossiper.forwardFilePullRequest(pullRequest, 0)
+		}
+	} else {
+		if gossiper.debug {
+			fmt.Println("__________PR not for me. Passing on")
+		}
+		gossiper.forwardFilePullRequest(pullRequest, 0)
+	}
+}
+
 func neighbourNotificationHandler(packet GossipPacket, gossiper *Gossiper) {
 	notification := packet.NeighbourNotification
-	fmt.Println("Notification received", notification)
+	if gossiper.debug {
+		fmt.Println("__________Notification received", notification)
+	}
 	if notification.Destination == gossiper.Name || notification.Destination == "" {
 		sharedLength := getSharedLength(gossiper.Name, notification.Origin)
-		fmt.Printf("shared length %d\n", sharedLength)
+		if gossiper.debug {
+			fmt.Printf("__________Shared length %d\n", sharedLength)
+		}
 		var response NotificationResponse
 
 		if sharedLength == NodeIDLength {
@@ -26,7 +105,7 @@ func neighbourNotificationHandler(packet GossipPacket, gossiper *Gossiper) {
 				killThyself: true,
 			}
 			fmt.Println("Forwarding kill thyself response")
-			gossiper.forwardNotificationResponse(&response)
+			gossiper.forwardNotificationResponse(&response, 0)
 			return
 		} else {
 			response = NotificationResponse{
@@ -39,16 +118,22 @@ func neighbourNotificationHandler(packet GossipPacket, gossiper *Gossiper) {
 
 			nextDestination := getNumericallyClosestId(notification.Origin, gossiper)
 			if nextDestination == gossiper.Name {
-				fmt.Println("Notification is destined for me!. Including my leaf set in response")
+				if gossiper.debug {
+					fmt.Println("__________Notification is destined for me!. Including my leaf set in response")
+				}
 				response.UpperLeafSet = gossiper.upperLeafSet
 				response.LowerLeafSet = gossiper.lowerLeafSet
 			} else {
 				if nextDestination != "" {
 					notification.Destination = nextDestination
-					fmt.Printf("Forwarding notification to next dest %s\n", nextDestination)
-					gossiper.forwardNeighbourNotification(notification)
+					if gossiper.debug {
+						fmt.Printf("__________Forwarding notification to next dest %s\n", nextDestination)
+					}
+					gossiper.forwardNeighbourNotification(notification, 0)
 				} else {
-					fmt.Println("Next destination not found!")
+					if gossiper.debug {
+						fmt.Println("__________Next destination not found!")
+					}
 				}
 
 			}
@@ -57,8 +142,10 @@ func neighbourNotificationHandler(packet GossipPacket, gossiper *Gossiper) {
 				response.Neighbors = gossiper.neighbours
 			}
 
-			fmt.Println("Forwarding response", response)
-			gossiper.forwardNotificationResponse(&response)
+			if gossiper.debug {
+				fmt.Println("__________Forwarding response", response)
+			}
+			gossiper.forwardNotificationResponse(&response, 0)
 		}
 
 		if notification.Origin != gossiper.Name {
@@ -66,15 +153,17 @@ func neighbourNotificationHandler(packet GossipPacket, gossiper *Gossiper) {
 			gossiper.printPastryState()
 		}
 	} else {
-		fmt.Println("Not for me. Passing on.")
-		gossiper.forwardNeighbourNotification(notification)
+		if gossiper.debug {
+			fmt.Println("__________Not for me. Passing on.")
+		}
+		gossiper.forwardNeighbourNotification(notification, 0)
 	}
 
 }
 
 func storePeerInState(peer Peer, gossiper *Gossiper) {
 	if peer.Name == gossiper.Name {
-		fmt.Println("In storePeerInState, passed peer is me. returning.")
+		fmt.Println("__________In storePeerInState, passed peer is me. returning.")
 		return
 	}
 
@@ -85,7 +174,9 @@ func storePeerInState(peer Peer, gossiper *Gossiper) {
 			if !peerExists {
 				gossiper.neighbours = append(gossiper.neighbours, peer)
 			} else {
-				fmt.Println("Peer already exists in neighbours", peer)
+				if gossiper.debug {
+					fmt.Println("__________Peer already exists in neighbours", peer)
+				}
 			}
 		}
 	}
@@ -122,7 +213,9 @@ func storePeerInState(peer Peer, gossiper *Gossiper) {
 				}
 			}
 		} else {
-			fmt.Println("Peer already exists in upper leaf set")
+			if gossiper.debug {
+				fmt.Println("__________Peer already exists in upper leaf set")
+			}
 		}
 	} else if peerNameVal < thisNodeNameVal {
 		peerExists := isPeerExistingIn(peer, gossiper.lowerLeafSet)
@@ -143,10 +236,12 @@ func storePeerInState(peer Peer, gossiper *Gossiper) {
 				}
 			}
 		} else {
-			fmt.Println("Peer already exists in lower leaf set")
+			if gossiper.debug {
+				fmt.Println("__________Peer already exists in lower leaf set")
+			}
 		}
 	} else {
-		fmt.Println("Same node name value. Cannot happen!")
+		fmt.Println("__________Same node name value. Cannot happen!")
 	}
 }
 
@@ -170,11 +265,6 @@ func getNumericallyClosestId(name string, gossiper *Gossiper) (closestId string)
 		minLeafVal, _ := strconv.ParseInt(minLeaf.Name, 4, 0)
 		maxLeafVal, _ := strconv.ParseInt(maxLeaf.Name, 4, 0)
 
-		fmt.Println("Full sorted leafset", leafSet)
-		fmt.Println("Min leaf & val", minLeaf, minLeafVal)
-		fmt.Println("Max leaf & val", maxLeaf, maxLeafVal)
-		fmt.Println("Incoming node & val", name, nameVal)
-
 		leastDif := int64(65535)
 
 		if nameVal > minLeafVal && nameVal < maxLeafVal {
@@ -190,12 +280,11 @@ func getNumericallyClosestId(name string, gossiper *Gossiper) (closestId string)
 			dif := Abs(thisNodeNameVal - nameVal)
 			// If this node is the closest
 			if dif < leastDif {
-				fmt.Println("I am the closest among leafs")
-				fmt.Println("Last least dif", leastDif)
-				fmt.Println("My dif", dif)
 				closestId = gossiper.Name
 			} else {
-				fmt.Println("Picked closest id from leafs")
+				if gossiper.debug {
+					fmt.Println("__________Picked closest id from leafs")
+				}
 			}
 			return
 		}
@@ -207,14 +296,18 @@ func getNumericallyClosestId(name string, gossiper *Gossiper) (closestId string)
 	routingNode := gossiper.pastryRoutingTable[sharedLength][nameCharVal]
 	if routingNode.isInitialized() {
 		closestId = routingNode.Name
-		fmt.Println("Picked closest id from routing table")
+		if gossiper.debug {
+			fmt.Println("__________Picked closest id from routing table")
+		}
 		return
 	} else {
 		for _, leaf := range gossiper.lowerLeafSet {
 			leafVal, _ := strconv.ParseInt(leaf.Name, 4, 0)
 			if getSharedLength(leaf.Name, name) >= sharedLength && Abs(thisNodeNameVal-nameVal) > Abs(leafVal-nameVal) {
 				closestId = leaf.Name
-				fmt.Println("Closest ID from Last resort. From lowerleafset")
+				if gossiper.debug {
+					fmt.Println("__________Closest ID from Last resort. From Lower Leaf Set")
+				}
 				return
 			}
 		}
@@ -223,7 +316,9 @@ func getNumericallyClosestId(name string, gossiper *Gossiper) (closestId string)
 			leafVal, _ := strconv.ParseInt(leaf.Name, 4, 0)
 			if getSharedLength(leaf.Name, name) >= sharedLength && Abs(thisNodeNameVal-nameVal) > Abs(leafVal-nameVal) {
 				closestId = leaf.Name
-				fmt.Println("Closest ID from Last resort. From upperleafset")
+				if gossiper.debug {
+					fmt.Println("__________Closest ID from Last resort. From Upper Leaf Set")
+				}
 				return
 			}
 		}
@@ -235,7 +330,9 @@ func getNumericallyClosestId(name string, gossiper *Gossiper) (closestId string)
 					nodeVal, _ := strconv.ParseInt(node.Name, 4, 0)
 					if getSharedLength(node.Name, name) >= sharedLength && Abs(thisNodeNameVal-nameVal) > Abs(nodeVal-nameVal) {
 						closestId = node.Name
-						fmt.Println("Closest ID from Last resort. From routing table")
+						if gossiper.debug {
+							fmt.Println("__________Closest ID from Last resort. From routing table")
+						}
 						return
 					}
 				}
@@ -246,23 +343,29 @@ func getNumericallyClosestId(name string, gossiper *Gossiper) (closestId string)
 			nodeVal, _ := strconv.ParseInt(node.Name, 4, 0)
 			if getSharedLength(node.Name, name) >= sharedLength && Abs(thisNodeNameVal-nameVal) > Abs(nodeVal-nameVal) {
 				closestId = node.Name
-				fmt.Println("Closest ID from Last resort. From neighbours")
+				if gossiper.debug {
+					fmt.Println("__________Closest ID from Last resort. From neighbours")
+				}
 
 				return
 			}
 		}
 	}
-	fmt.Println("Closest ID not found. Returning myself")
+	if gossiper.debug {
+		fmt.Println("__________Closest ID not found. Returning myself")
+	}
 
 	return
 }
 
 func notificationResponseHandler(packet GossipPacket, gossiper *Gossiper) {
 	response := packet.NotificationResponse
-	fmt.Println("Res recevied ", *response)
+	if gossiper.debug {
+		fmt.Println("__________Notification Response received ", *response)
+	}
 	if response.killThyself {
-		// Chosen ID non unique. Killing.
-		fmt.Println("Chosen ID non unique. Killing myself :( ")
+		// Chosen ID non unique. Killing process.
+		fmt.Println("__________Chosen Node ID (name) found to be non unique. Killing the process. Pls restart")
 		os.Exit(3)
 	}
 
@@ -274,7 +377,7 @@ func notificationResponseHandler(packet GossipPacket, gossiper *Gossiper) {
 				}
 			}
 		} else {
-			fmt.Println("Response Row is nil. Should not happen!")
+			fmt.Println("__________Response Row is nil. Should not happen!")
 		}
 
 		if response.Neighbors != nil {
@@ -298,8 +401,10 @@ func notificationResponseHandler(packet GossipPacket, gossiper *Gossiper) {
 			gossiper.printPastryState()
 		}
 	} else {
-		fmt.Println("Not for me. Passing on.")
-		gossiper.forwardNotificationResponse(response)
+		if gossiper.debug {
+			fmt.Println("__________Not for me. Passing on.")
+		}
+		gossiper.forwardNotificationResponse(response, 0)
 	}
 
 }

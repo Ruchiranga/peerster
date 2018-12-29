@@ -47,6 +47,8 @@ type GossipPacket struct {
 	BlockPublish          *BlockPublish
 	NeighbourNotification *NeighbourNotification
 	NotificationResponse  *NotificationResponse
+	FilePullRequest       *FilePullRequest
+	FileReplicateAck      *FileReplicateAck
 }
 
 type GenericMessage struct {
@@ -116,6 +118,20 @@ type NeighbourNotification struct {
 	Origin      string
 	Address     string
 	Destination string
+}
+
+type FilePullRequest struct {
+	Origin      string
+	Destination string
+	HashValue   []byte
+	FileName    string
+	FileId      string
+}
+
+type FileReplicateAck struct {
+	Destination string
+	HashValue   []byte
+	Origin      string
 }
 
 type NotificationResponse struct {
