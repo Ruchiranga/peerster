@@ -18,60 +18,89 @@ func printStatusMessageLog(packet GossipPacket, relayPeer string) {
 	for _, peerStatus := range packet.Status.Want {
 		statusStr += fmt.Sprintf(" peer %s nextID %d", peerStatus.Identifier, peerStatus.NextId)
 	}
-	fmt.Printf("%s\n", statusStr)
+	if Verbose {
+		fmt.Printf("%s\n", statusStr)
+	}
+
 }
 
 func printInSyncLog(relayPeer string) {
-	fmt.Printf("IN SYNC WITH %s\n", relayPeer)
+	if Verbose {
+		fmt.Printf("IN SYNC WITH %s\n", relayPeer)
+	}
 }
 
 func printMongeringWithLog(address string) {
-	fmt.Printf("MONGERING with %s\n", address)
+	if Verbose {
+		fmt.Printf("MONGERING with %s\n", address)
+	}
 }
 
 func printClientMessageLog(message string) {
-	fmt.Printf("CLIENT MESSAGE %s\n", message)
+	if Verbose {
+		fmt.Printf("CLIENT MESSAGE %s\n", message)
+	}
 }
 
 func printPeersLog(peers []string) {
-	fmt.Printf("PEERS %s\n", strings.Join(peers, ","))
+	if Verbose {
+		fmt.Printf("PEERS %s\n", strings.Join(peers, ","))
+	}
 }
 
 func printSimpleMessageLog(message SimpleMessage) {
-	fmt.Printf("SIMPLE MESSAGE origin %s from %s contents %s\n", message.OriginalName, message.RelayPeerAddr, message.Contents)
+	if Verbose {
+		fmt.Printf("SIMPLE MESSAGE origin %s from %s contents %s\n", message.OriginalName, message.RelayPeerAddr, message.Contents)
+	}
 }
 
 func printRumorMessageLog(message RumorMessage, relayPeer string) {
-	fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", message.Origin, relayPeer,
-		message.ID, message.Text)
+	if Verbose {
+		fmt.Printf("RUMOR origin %s from %s ID %d contents %s\n", message.Origin, relayPeer,
+			message.ID, message.Text)
+	}
 }
 
 func printPrivateMessageLog(message PrivateMessage) {
-	fmt.Printf("PRIVATE origin %s hop-limit %d contents %s\n", message.Origin, message.HopLimit, message.Text)
+	if Verbose {
+		fmt.Printf("PRIVATE origin %s hop-limit %d contents %s\n", message.Origin, message.HopLimit, message.Text)
+	}
 }
 
 func printMetaFileDownloadLog(file string, peer string) {
-	fmt.Printf("DOWNLOADING metafile of %s from %s\n", file, peer)
+	if Verbose {
+		fmt.Printf("DOWNLOADING metafile of %s from %s\n", file, peer)
+	}
 }
 
 func printFileChunkDownloadLog(file string, index int, peer string) {
-	fmt.Printf("DOWNLOADING %s chunk %d from %s\n", file, index, peer)
+	if Verbose {
+		fmt.Printf("DOWNLOADING %s chunk %d from %s\n", file, index, peer)
+	}
 }
 
 func printFileReconstructLog(file string) {
-	fmt.Printf("RECONSTRUCTED file %s\n", file)
+	if Verbose {
+		fmt.Printf("RECONSTRUCTED file %s\n", file)
+	}
 }
 
 func printFileIndexingLog(file string) {
-	fmt.Printf("INDEXING file %s\n", file)
+	if Verbose {
+		fmt.Printf("INDEXING file %s\n", file)
+	}
 }
 
 func printSuccessfulMineLog(hash [32]byte) {
-	fmt.Printf("FOUND-BLOCK %x\n", hash)
+	if Verbose {
+		fmt.Printf("FOUND-BLOCK %x\n", hash)
+	}
 }
 
 func printReplicateDownloadSuccessLog(fileName string, metaHash string) {
-	fmt.Printf("REPLICATE DOWNLOAD COMPLETE FileName %s MetaHash %s\n", fileName, metaHash)
+	if Verbose {
+		fmt.Printf("REPLICATE DOWNLOAD COMPLETE FileName %s MetaHash %s\n", fileName, metaHash)
+	}
 }
 
 func printBlockChainLog(chain []Block) {
@@ -99,42 +128,60 @@ func printBlockChainLog(chain []Block) {
 		}
 	}
 
-	fmt.Println(fmt.Sprintf("CHAIN %s", finalString))
+	if Verbose {
+		fmt.Println(fmt.Sprintf("CHAIN %s", finalString))
+	}
 }
 
 func printSearchFinishedLog() {
-	fmt.Println("SEARCH FINISHED")
+	if Verbose {
+		fmt.Println("SEARCH FINISHED")
+	}
 }
 
 func printForkLongerLog(count int) {
-	fmt.Printf("FORK-LONGER rewind %d blocks\n", count)
+	if Verbose {
+		fmt.Printf("FORK-LONGER rewind %d blocks\n", count)
+	}
 }
 
 func printForkShorterLog(hash [32]byte) {
-	fmt.Printf("FORK-SHORTER %x\n", hash)
+	if Verbose {
+		fmt.Printf("FORK-SHORTER %x\n", hash)
+	}
 }
 
 func printFileIndexingCompletedLog(file string, hash string) {
-	fmt.Printf("INDEXED file %s metahash %s\n", file, hash)
+	if Verbose {
+		fmt.Printf("INDEXED file %s metahash %s\n", file, hash)
+	}
 }
 
 func printCoinFlippedLog(address string) {
-	fmt.Printf("FLIPPED COIN sending rumor to %s\n", address)
+	if Verbose {
+		fmt.Printf("FLIPPED COIN sending rumor to %s\n", address)
+	}
 }
 
 func printDSDVLog(origin string, nextHop string) {
-	fmt.Printf("DSDV %s %s\n", origin, nextHop)
+	if Verbose {
+		fmt.Printf("DSDV %s %s\n", origin, nextHop)
+	}
 }
 
 func printReplicationCompleteLog(targets []string) {
+	//if Verbose {
 	fmt.Println("REPLICATION COMPLETED in targets", targets)
+	//}
 }
 
 func (gossiper *Gossiper) printPastryState() {
+	//if Verbose {
 	fmt.Println("--------------------------------------------------------------------------------------------------")
 	fmt.Printf("NEIGHBOURS %v\nROUTING TABLE %v\nLARGER LEAF SET %v\nSMALLER LEAF SET %v\n", gossiper.neighbours,
 		gossiper.pastryRoutingTable, gossiper.upperLeafSet, gossiper.lowerLeafSet)
 	fmt.Println("--------------------------------------------------------------------------------------------------")
+	//}
 }
 
 func printSearchResultLog(fileName string, origin string, metaHash []byte, chunkMap []uint64) {
@@ -148,7 +195,9 @@ func printSearchResultLog(fileName string, origin string, metaHash []byte, chunk
 		}
 		list = fmt.Sprintf("%s,%d", list, chunk)
 	}
-	fmt.Printf("FOUND match %s at %s metafile=%s chunks=%s\n", fileName, origin, hex.EncodeToString(metaHash), list)
+	if Verbose {
+		fmt.Printf("FOUND match %s at %s metafile=%s chunks=%s\n", fileName, origin, hex.EncodeToString(metaHash), list)
+	}
 }
 
 func getNextWantId(messages []GenericMessage) (nextId uint32) {

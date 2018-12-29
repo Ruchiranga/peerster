@@ -1202,7 +1202,7 @@ func (gossiper *Gossiper) sendPullRequests(metaHash []byte, fileName string, rep
 	gossiper.forwardFilePullRequest(&pullRequest, 0)
 
 	go func() {
-		ticker := time.NewTicker(15 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
 		var ackPtr *FileReplicateAck
 		ackPtr = nil
 		select {

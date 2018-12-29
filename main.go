@@ -11,8 +11,10 @@ import (
 )
 
 var NodeIDLength int
+var Verbose bool
 
 func main() {
+	Verbose = false
 	NodeIDLength = 8
 
 	DEBUG := false
