@@ -89,6 +89,7 @@ func NewGossiper(address string, peers []string, uiPort string, simple bool, rti
 	fileMetaMap := make(map[string][]byte)
 	fileReplicateAwaitMap := make(map[string]func(ack FileReplicateAck))
 	fileReplicatedTargetsMap := make(map[string][]string)
+	fileStreamableSrcMap := make(map[string]string)
 	// Jobs channel length did not seem to exceed 10 items even at high loads.
 	// Hence a value of 20 is given keeping a buffer.
 	jobsChannel := make(chan func(), 20)
@@ -143,5 +144,6 @@ func NewGossiper(address string, peers []string, uiPort string, simple bool, rti
 		lowerLeafSet:             lowerLeafSet,
 		fileReplicateAwaitMap:    fileReplicateAwaitMap,
 		fileReplicatedTargetsMap: fileReplicatedTargetsMap,
+		fileStreamableSrcMap:     fileStreamableSrcMap,
 	}
 }

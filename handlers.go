@@ -522,10 +522,11 @@ func searchRequestHandler(packet GossipPacket, gossiper *Gossiper) {
 					}
 
 					result := SearchResult{
-						FileName:     file.Name,
-						MetafileHash: file.MetaHash,
-						ChunkMap:     chunkMap,
-						ChunkCount:   chunkCount,
+						FileName:      file.Name,
+						MetafileHash:  file.MetaHash,
+						ChunkMap:      chunkMap,
+						ChunkCount:    chunkCount,
+						StreamableSrc: file.StreamableSrc,
 					}
 					matches = append(matches, &result)
 				}
@@ -584,13 +585,14 @@ func dataRequestHandler(packet GossipPacket, gossiper *Gossiper) {
 	}
 	if request.Destination == gossiper.Name {
 		data, available := gossiper.fileContentMap[hex.EncodeToString(request.HashValue)]
+		streamableSrc, _ := gossiper.fileStreamableSrcMap[hex.EncodeToString(request.HashValue)]
 
 		if available {
 			if gossiper.debug {
 				fmt.Printf("__________Replying origin %s dest %s hash %s\n", gossiper.Name, request.Origin, request.HashValue)
 			}
 
-			reply := DataReply{Origin: gossiper.Name, Destination: request.Origin, HopLimit: 10, HashValue: request.HashValue, Data: data}
+			reply := DataReply{Origin: gossiper.Name, Destination: request.Origin, HopLimit: 10, HashValue: request.HashValue, Data: data, StreamableSrc: streamableSrc}
 			gossiper.forwardDataReply(&reply)
 		}
 	} else {

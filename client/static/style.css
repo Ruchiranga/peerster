@@ -71,3 +71,18 @@ form {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
+
+.play-button {
+    float: right;
+    width: 20px;
+    text-align: center;
+
+}
+
+.play-button:hover {
+    color: cornflowerblue;
+}
+
+#player-container {
+    display: none;
+}

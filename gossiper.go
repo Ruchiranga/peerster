@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,13 +56,15 @@ type Gossiper struct {
 	lowerLeafSet             []Peer
 	fileReplicateAwaitMap    map[string]func(ack FileReplicateAck)
 	fileReplicatedTargetsMap map[string][]string
+	fileStreamableSrcMap     map[string]string
 }
 
 type FileIndex struct {
-	Name     string
-	Size     uint32
-	MetaFile []byte
-	MetaHash []byte
+	Name          string
+	Size          uint32
+	MetaFile      []byte
+	MetaHash      []byte
+	StreamableSrc string
 }
 
 func (gossiper *Gossiper) rememberPeer(address string) {
@@ -266,10 +270,11 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 					// To be able to be served to another peer
 					gossiper.fileContentMap[metaHashHex] = replyPtr.Data
 					gossiper.fileList = append(gossiper.fileList, FileIndex{
-						Name:     fileName,
-						Size:     0, // TODO set the file size once the download is done
-						MetaFile: replyPtr.Data,
-						MetaHash: metaHash,
+						Name:          fileName,
+						Size:          0, // TODO set the file size once the download is done
+						MetaFile:      replyPtr.Data,
+						MetaHash:      metaHash,
+						StreamableSrc: replyPtr.StreamableSrc,
 					})
 					gossiper.requestFileChunk(metaHashHex, replyPtr.Data, 0, fileName, dest, done)
 					return
@@ -942,6 +947,7 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	mux := http.NewServeMux()
 	fileServer := http.FileServer(http.Dir("./client/static"))
 
+	mux.Handle("/streaming/", http.StripPrefix("/streaming/", http.FileServer(http.Dir("./_SharedFiles/Streaming/"))))
 	mux.Handle("/", fileServer)
 	mux.Handle("/message", messageHandler)
 	mux.Handle("/node", nodeHandler)
@@ -1069,7 +1075,7 @@ func (gossiper *Gossiper) searchFile(keywords string, budgetStr string, status c
 							fmt.Printf("__________Result map for %s - %v\n", result.FileName, gossiper.searchResults[metaHash])
 						}
 						if !guiAwaitTimedOut {
-							returnString := fmt.Sprintf("%s,%s", result.FileName, metaHash)
+							returnString := fmt.Sprintf("%s,%s,%s", result.FileName, metaHash, result.StreamableSrc)
 
 							select {
 							case status <- returnString:
@@ -1161,18 +1167,21 @@ func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
 	metaHash := sha256.Sum256(metaFile)
 	metaHashHex := hex.EncodeToString(metaHash[:])
 	gossiper.fileContentMap[metaHashHex] = metaFile
+	transcodedPath := gossiper.transcodeStreamableFile(fileName)
+	gossiper.fileStreamableSrcMap[metaHashHex] = transcodedPath
 
 	gossiper.fileList = append(gossiper.fileList, FileIndex{
-		Name:     fileName,
-		Size:     size,
-		MetaFile: metaFile,
-		MetaHash: metaHash[:],
+		Name:          fileName,
+		Size:          size,
+		MetaFile:      metaFile,
+		MetaHash:      metaHash[:],
+		StreamableSrc: transcodedPath,
 	})
 
 	printFileIndexingCompletedLog(fileName, metaHashHex)
 
 	gossiper.sendPullRequests(metaHash[:], fileName, 5)
-	gossiper.txPublishFile(fileName, int64(size), metaHash[:])
+	gossiper.txPublishFile(fileName, int64(size), metaHash[:], transcodedPath)
 
 	return true
 }
@@ -1244,7 +1253,7 @@ func (gossiper *Gossiper) sendPullRequests(metaHash []byte, fileName string, rep
 	}()
 }
 
-func (gossiper *Gossiper) txPublishFile(fileName string, size int64, metaHash []byte) {
+func (gossiper *Gossiper) txPublishFile(fileName string, size int64, metaHash []byte, streamableSrc string) {
 	for _, tx := range gossiper.publishedTxs {
 		if tx.File.Name == fileName &&
 			tx.File.Size == size &&
@@ -1259,7 +1268,7 @@ func (gossiper *Gossiper) txPublishFile(fileName string, size int64, metaHash []
 		return
 	}
 
-	txPubFile := File{Name: fileName, Size: int64(size), MetafileHash: metaHash}
+	txPubFile := File{Name: fileName, Size: int64(size), MetafileHash: metaHash, StreamableSrc: streamableSrc}
 
 	txPub := TxPublish{File: txPubFile, HopLimit: 10}
 
@@ -1725,4 +1734,21 @@ func (gossiper *Gossiper) initializePastry() {
 		<-time.After(3 * time.Second)
 		gossiper.notifyANeighbour()
 	}
+}
+
+func (gossiper *Gossiper) transcodeStreamableFile(fileName string) string {
+	path := fmt.Sprintf("./_SharedFiles/%s", fileName)
+	nameWithoutExtension := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	outputPath := fmt.Sprintf("./_SharedFiles/Streaming/%s.mp3", nameWithoutExtension)
+	// Audio Streaming - try to transcode to mp3 file if it is an audio file
+	cmd := "ffmpeg"
+
+	args := []string{"-y", "-i", path, "-error-resilient", "1", "-codec:a", "libmp3lame", "-b:a", "128k", outputPath}
+	_, err := exec.Command(cmd, args...).Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "File is not transcodable: ", err)
+		return ""
+	}
+	fmt.Println("ENCODING SUCCEEDED")
+	return fmt.Sprintf("http://%s:%s/streaming/%s.mp3", gossiper.gossipAddress.IP.String(), gossiper.uiPort, nameWithoutExtension)
 }

@@ -65,11 +65,12 @@ type DataRequest struct {
 }
 
 type DataReply struct {
-	Origin      string
-	Destination string
-	HopLimit    uint32
-	HashValue   []byte
-	Data        []byte
+	Origin        string
+	Destination   string
+	HopLimit      uint32
+	HashValue     []byte
+	Data          []byte
+	StreamableSrc string
 }
 
 type SearchRequest struct {
@@ -86,16 +87,18 @@ type SearchReply struct {
 }
 
 type SearchResult struct {
-	FileName     string
-	MetafileHash []byte
-	ChunkMap     []uint64
-	ChunkCount   uint64
+	FileName      string
+	MetafileHash  []byte
+	ChunkMap      []uint64
+	ChunkCount    uint64
+	StreamableSrc string
 }
 
 type File struct {
-	Name         string
-	Size         int64
-	MetafileHash []byte
+	Name          string
+	Size          int64
+	MetafileHash  []byte
+	StreamableSrc string
 }
 
 type TxPublish struct {
