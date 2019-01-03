@@ -49,6 +49,9 @@ type GossipPacket struct {
 	NotificationResponse  *NotificationResponse
 	FilePullRequest       *FilePullRequest
 	FileReplicateAck      *FileReplicateAck
+	EncPrivate            *EncPrivateMessage
+	BlockChainRequest     *BlockChainRequest
+	BlockChainReply       *BlockChainReply
 }
 
 type GenericMessage struct {
@@ -102,8 +105,9 @@ type File struct {
 }
 
 type TxPublish struct {
-	File     File
-	HopLimit uint32
+	File         File
+	Announcement *PKIAnnoucement
+	HopLimit     uint32
 }
 
 type BlockPublish struct {
@@ -181,6 +185,12 @@ func (t *TxPublish) Hash() (out [32]byte) {
 		uint32(len(t.File.Name)))
 	h.Write([]byte(t.File.Name))
 	h.Write(t.File.MetafileHash)
+
+	binary.Write(h, binary.LittleEndian, uint32(len(t.Announcement.Record.Owner)))
+	h.Write([]byte(t.Announcement.Record.Owner))
+	h.Write(t.Announcement.Record.PubKey)
+	h.Write(t.Announcement.Signature)
+
 	copy(out[:], h.Sum(nil))
 	return
 }

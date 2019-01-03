@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -57,6 +58,9 @@ type Gossiper struct {
 	fileReplicateAwaitMap    map[string]func(ack FileReplicateAck)
 	fileReplicatedTargetsMap map[string][]string
 	fileStreamableSrcMap     map[string]string
+	key                      *rsa.PrivateKey
+	keyMap                   map[string]*rsa.PublicKey
+	blockchainBootstrap      bool
 }
 
 type FileIndex struct {
@@ -318,6 +322,8 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		statusHandler(packet, relayPeer, gossiper)
 	} else if packet.Private != nil {
 		privateHandler(packet, gossiper)
+	} else if packet.EncPrivate != nil {
+		encPrivateHandler(packet, gossiper)
 	} else if packet.DataRequest != nil {
 		dataRequestHandler(packet, gossiper)
 	} else if packet.DataReply != nil {
@@ -338,6 +344,10 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		filePullRequestHandler(packet, gossiper)
 	} else if packet.FileReplicateAck != nil {
 		fileReplicateAckHandler(packet, gossiper)
+	} else if packet.BlockChainReply != nil {
+		blockchainReplyHandler(packet, gossiper)
+	} else if packet.BlockChainRequest != nil {
+		blockchainRequestHandler(packet, gossiper)
 	} else {
 		if gossiper.debug {
 			fmt.Println("__________Unexpected gossip packet type.")
@@ -778,6 +788,33 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 									"Next hop for %s not found\n", packet.Private.Text, packet.Private.Destination)
 							}
 						}
+					} else if packet.EncPrivate != nil {
+						dest := packet.EncPrivate.Destination
+
+						if destKey, ok := gossiper.keyMap[dest]; ok {
+							packet.EncPrivate, err = NewEncPrivateMsg(gossiper.Name, packet.EncPrivate.Temp, dest, gossiper.key, destKey)
+							if err != nil {
+								if gossiper.debug {
+									fmt.Println(err)
+								}
+							}
+
+							nextHop, found := gossiper.routingTable[packet.EncPrivate.Destination]
+							if found {
+								gossiper.writeToAddr(packet, nextHop)
+							} else {
+								if gossiper.debug {
+									fmt.Printf("Could not forward client private message %s. "+
+										"Next hop for %s not found\n", packet.Private.Text, packet.Private.Destination)
+								}
+							}
+
+						} else {
+							if gossiper.debug {
+								fmt.Printf("Could not find destination %s public key.", dest)
+							}
+						}
+
 					} else { // SimpleMessage
 						gossiper.broadcast(packet)
 					}
@@ -1456,7 +1493,12 @@ func (gossiper *Gossiper) getFilteredPublishedTx(block Block) (filtered []TxPubl
 outer:
 	for _, publishedTx := range gossiper.publishedTxs {
 		for _, receivedTx := range block.Transactions {
-			if publishedTx.File.Name == receivedTx.File.Name {
+			if ann := receivedTx.Announcement; ann != nil {
+				if publishedTx.Announcement.Equal(ann) {
+					fmt.Println("FILTERED")
+					continue outer
+				}
+			} else if publishedTx.File.Name == receivedTx.File.Name {
 				continue outer
 			}
 		}
@@ -1471,9 +1513,18 @@ func (gossiper *Gossiper) appendBlock(block Block) {
 	gossiper.blockChain = append(gossiper.blockChain, block)
 	printBlockChainLog(gossiper.blockChain)
 
+	fmt.Println("APPENDING  BLOCK OF LEN:", len(block.Transactions))
 	for _, tx := range block.Transactions {
-		file := tx.File
-		gossiper.fileMetaMap[file.Name] = file.MetafileHash
+		if ann := tx.Announcement; ann != nil {
+			if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
+				gossiper.keyMap[ann.Record.Owner] = key
+				fmt.Println("FOUND KEY " + ann.Record.Owner + " " + hex.EncodeToString(ann.Record.PubKey))
+			}
+
+		} else {
+			file := tx.File
+			gossiper.fileMetaMap[file.Name] = file.MetafileHash
+		}
 	}
 }
 
@@ -1534,12 +1585,23 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 
 						for _, castOff := range castOffs {
 							for _, tx := range castOff.Transactions {
-								delete(gossiper.fileMetaMap, tx.File.Name)
+								if ann := tx.Announcement; ann != nil {
+									delete(gossiper.keyMap, ann.Record.Owner)
+								} else {
+									delete(gossiper.fileMetaMap, tx.File.Name)
+								}
 							}
 						}
 						for _, newJoiner := range newJoiners {
 							for _, tx := range newJoiner.Transactions {
-								gossiper.fileMetaMap[tx.File.Name] = tx.File.MetafileHash
+								if ann := tx.Announcement; ann != nil {
+									if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
+										gossiper.keyMap[ann.Record.Owner] = key
+										fmt.Println("FOUND KEY " + ann.Record.Owner + " " + hex.EncodeToString(ann.Record.PubKey))
+									}
+								} else {
+									gossiper.fileMetaMap[tx.File.Name] = tx.File.MetafileHash
+								}
 							}
 						}
 
@@ -1649,13 +1711,22 @@ func (gossiper *Gossiper) processStrayBlocks() {
 
 func (gossiper *Gossiper) txChannelListener(wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	<-time.After(10 * time.Second)
+	//gossiper.bootstrapBlockchain = true
+
 	isFirstMinedBlock := true
 
 outer:
 	for {
 		tx := <-gossiper.txChannel
 		for _, existingTx := range gossiper.publishedTxs {
-			if existingTx.File.Name == tx.File.Name {
+			if tx.Announcement != nil {
+				if existingTx.Announcement.Equal(tx.Announcement) {
+					fmt.Println("TX CHANNEL")
+					continue outer
+				}
+			} else if existingTx.File.Name == tx.File.Name {
 				continue outer
 			}
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rsa"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -14,13 +15,14 @@ var NodeIDLength int
 var Verbose bool
 
 func main() {
-	Verbose = false
+	Verbose = true
 	NodeIDLength = 8
 
 	DEBUG := false
 
 	uiPort := flag.String("UIPort", "8080", "Port for the UI client")
 	gossipAddress := flag.String("gossipAddr", "127.0.0.1:5000", "ip:port for the gossiper")
+	name := flag.String("name", "", "Name of the gossiper")
 	peersString := flag.String("peers", "", "comma separated list of peers of the form ip:port")
 	simple := flag.Bool("simple", false, "run gossiper in simple broadcast mode")
 	rtimer := flag.Int("rtimer", 0, "route rumors sending period in seconds, 0 to disable sending of route rumors")
@@ -46,26 +48,33 @@ func main() {
 	}
 
 	fmt.Println("Peers", peersList)
-	gossiper := NewGossiper(*gossipAddress, peersList, *uiPort, *simple, *rtimer, DEBUG)
+	gossiper := NewGossiper(*name, *gossipAddress, peersList, *uiPort, *simple, *rtimer, DEBUG)
 
 	var wg sync.WaitGroup
 	wg.Add(6)
 
+	gossiper.initKey(gossiper.Name + "-" + DefaultKeyFileName)
 	go gossiper.initializePastry()
 	go gossiper.executeJobs(&wg)
 	go gossiper.executeBlockChainJobs(&wg)
 	go gossiper.listenUi(&wg)
 	go gossiper.listenGossip(&wg)
 	go gossiper.doAntiEntropy(&wg)
+
+	go gossiper.bootstrapBlockchain()
+
 	go gossiper.txChannelListener(&wg)
 	if *rtimer > 0 {
 		wg.Add(1)
 		go gossiper.announceRoutes(&wg)
 	}
+
+	go gossiper.txPublishMyKey(gossiper.key, gossiper.Name)
+
 	wg.Wait()
 }
 
-func NewGossiper(address string, peers []string, uiPort string, simple bool, rtimer int, debug bool) *Gossiper {
+func NewGossiper(name string, address string, peers []string, uiPort string, simple bool, rtimer int, debug bool) *Gossiper {
 	udpAddr, addrErr := net.ResolveUDPAddr("udp4", address)
 	if addrErr != nil {
 		panic(addrErr)
@@ -75,7 +84,9 @@ func NewGossiper(address string, peers []string, uiPort string, simple bool, rti
 		panic(connErr)
 	}
 
-	name := generateResourceId()
+	if name == "" {
+		name = generateResourceId()
+	}
 	fmt.Printf("My name is %s\n", name)
 	messagesMap := make(map[string][]GenericMessage)
 	ackAwaitMap := make(map[string]func(status StatusPacket))
@@ -90,6 +101,7 @@ func NewGossiper(address string, peers []string, uiPort string, simple bool, rti
 	fileReplicateAwaitMap := make(map[string]func(ack FileReplicateAck))
 	fileReplicatedTargetsMap := make(map[string][]string)
 	fileStreamableSrcMap := make(map[string]string)
+	keyMap := make(map[string]*rsa.PublicKey)
 	// Jobs channel length did not seem to exceed 10 items even at high loads.
 	// Hence a value of 20 is given keeping a buffer.
 	jobsChannel := make(chan func(), 20)
@@ -145,5 +157,7 @@ func NewGossiper(address string, peers []string, uiPort string, simple bool, rti
 		fileReplicateAwaitMap:    fileReplicateAwaitMap,
 		fileReplicatedTargetsMap: fileReplicatedTargetsMap,
 		fileStreamableSrcMap:     fileStreamableSrcMap,
+		keyMap:                   keyMap,
+		blockchainBootstrap:      false,
 	}
 }

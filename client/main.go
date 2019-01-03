@@ -15,6 +15,7 @@ func main() {
 	requestHash := flag.String("request", "", "request a chunk or metafile of this hash")
 	keyWords := flag.String("keywords", "", "search for files having these key words")
 	budget := flag.Int("budget", -1, "Search budget")
+	secure := flag.Bool("secure", false, "run gossiper with security features")
 	simpleMode := false
 
 	flag.Parse()
@@ -29,7 +30,11 @@ func main() {
 		if simpleMode {
 			content = fmt.Sprintf(`{"simple": {"contents": "%s"}}`, *message)
 		} else if *destination != "" {
-			content = fmt.Sprintf(`{"private": {"text": "%s", "destination": "%s"}}`, *message, *destination)
+			if *secure {
+				content = fmt.Sprintf(`{"encprivate": {"temp": "%s", "destination": "%s"}}`, *message, *destination)
+			} else {
+				content = fmt.Sprintf(`{"private": {"text": "%s", "destination": "%s"}}`, *message, *destination)
+			}
 		} else {
 			content = fmt.Sprintf(`{"rumor": {"text": "%s"}}`, *message)
 		}

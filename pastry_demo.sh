@@ -3,7 +3,7 @@
 declare -a AddressList
 declare -a LiveList
 
-nodeCount=25
+nodeCount=20
 
 gossipPort=5000
 
