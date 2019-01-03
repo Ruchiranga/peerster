@@ -60,6 +60,9 @@ func main() {
 	go gossiper.listenUi(&wg)
 	go gossiper.listenGossip(&wg)
 	go gossiper.doAntiEntropy(&wg)
+
+	go gossiper.bootstrapBlockchain()
+
 	go gossiper.txChannelListener(&wg)
 	if *rtimer > 0 {
 		wg.Add(1)
@@ -153,5 +156,6 @@ func NewGossiper(name string, address string, peers []string, uiPort string, sim
 		fileReplicateAwaitMap:    fileReplicateAwaitMap,
 		fileReplicatedTargetsMap: fileReplicatedTargetsMap,
 		keyMap:                   keyMap,
+		blockchainBootstrap:      false,
 	}
 }

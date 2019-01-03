@@ -50,6 +50,8 @@ type GossipPacket struct {
 	FilePullRequest       *FilePullRequest
 	FileReplicateAck      *FileReplicateAck
 	EncPrivate            *EncPrivateMessage
+	BlockChainRequest     *BlockChainRequest
+	BlockChainReply       *BlockChainReply
 }
 
 type GenericMessage struct {

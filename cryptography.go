@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/gob"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/dedis/protobuf"
@@ -233,32 +234,6 @@ func (epm *EncPrivateMessage) VerifyAndDecrypt(originPubK *rsa.PublicKey, destPr
 	return string(dec), nil
 }
 
-/*
-func (gossiper *Gossiper) initKey(path string) {
-	if key, err := GetKey(path); err == nil {
-		gossiper.Key = key
-
-		if pkitx, err := NewPKITranscation(gossiper.Key, &gossiper.Key.PublicKey, gossiper.Name); err == nil {
-			// Send TX containing key
-			txPublish := &TxPublish{
-				PKITransaction: pkitx,
-				HopLimit:       HOP_LIMIT,
-			}
-
-			gossiper.BlockChannel <- nil
-			gossiper.updateNextBlock(txPublish, nil, UNUSED)
-			gossiper.BlockChannel <- gossiper.NextBlock
-
-			gp := &GossipPacket{
-				TxPublish: txPublish,
-			}
-
-			go broadcastPacket(gp, createPeerMap(gossiper.Peers), gossiper.UDPConn)
-		}
-	}
-}
-*/
-
 func (gossiper *Gossiper) initKey(path string) {
 	if key, err := GetKey(path); err == nil {
 		gossiper.key = key
@@ -319,4 +294,80 @@ func (gossiper *Gossiper) forwardEncPrivateMessage(encPrivate *EncPrivateMessage
 
 func printEncPrivate(origin string, hl uint32, contents string) {
 	fmt.Println("ENC PRIVATE origin " + origin + " hop-limit " + fmt.Sprint(hl) + " contents " + contents)
+}
+
+type BlockChainRequest struct {
+	Origin string
+	//HopLimit    uint32
+}
+
+type BlockChainReply struct {
+	Origin      string
+	Destination string
+	//HopLimit    uint32
+	Blockchain []Block
+}
+
+func blockchainRequestHandler(packet GossipPacket, gossiper *Gossiper) {
+	bcReq := packet.BlockChainRequest
+
+	fmt.Println("RECEIVED BLOCKCHAIN REQUEST")
+
+	bcRep := &BlockChainReply{
+		Origin:      gossiper.Name,
+		Destination: bcReq.Origin,
+		Blockchain:  gossiper.blockChain,
+	}
+
+	gossiper.forwardBlockchainReply(bcRep)
+}
+
+func (gossiper *Gossiper) forwardBlockchainReply(bcRep *BlockChainReply) {
+	address, found := gossiper.routingTable[bcRep.Destination]
+	if found {
+		packet := GossipPacket{BlockChainReply: bcRep}
+		gossiper.writeToAddr(packet, address)
+	} else {
+		if gossiper.debug {
+			fmt.Printf("__________Failed to forward blockchain reply. Next hop for %s not found.\n", bcRep.Destination)
+		}
+	}
+}
+
+func blockchainReplyHandler(packet GossipPacket, gossiper *Gossiper) {
+	bcRep := packet.BlockChainReply
+
+	fmt.Println("RECEIVED BLOCKCHAIN REPLY")
+
+	if bcRep.Destination == gossiper.Name && !gossiper.blockchainBootstrap {
+		gossiper.fileMetaMap = make(map[string][]byte)
+		gossiper.keyMap = make(map[string]*rsa.PublicKey)
+
+		gossiper.blockChain = bcRep.Blockchain
+
+		for _, block := range bcRep.Blockchain {
+			for _, tx := range block.Transactions {
+				if ann := tx.Announcement; ann != nil {
+					if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
+						gossiper.keyMap[ann.Record.Owner] = key
+						fmt.Println("FOUND KEY FROM BOOTSTRAP " + ann.Record.Owner + " " + hex.EncodeToString(ann.Record.PubKey))
+					}
+				} else {
+					gossiper.fileMetaMap[tx.File.Name] = tx.File.MetafileHash
+				}
+			}
+		}
+	}
+}
+
+func (gossiper *Gossiper) bootstrapBlockchain() {
+	packet := GossipPacket{
+		BlockChainRequest: &BlockChainRequest{
+			Origin: gossiper.Name,
+		},
+	}
+
+	for _, peer := range gossiper.Peers {
+		gossiper.writeToAddr(packet, peer)
+	}
 }

@@ -57,6 +57,7 @@ type Gossiper struct {
 	fileReplicatedTargetsMap map[string][]string
 	key                      *rsa.PrivateKey
 	keyMap                   map[string]*rsa.PublicKey
+	blockchainBootstrap      bool
 }
 
 type FileIndex struct {
@@ -338,6 +339,10 @@ func (gossiper *Gossiper) handleGossip(packet GossipPacket, relayPeer string) {
 		filePullRequestHandler(packet, gossiper)
 	} else if packet.FileReplicateAck != nil {
 		fileReplicateAckHandler(packet, gossiper)
+	} else if packet.BlockChainReply != nil {
+		blockchainReplyHandler(packet, gossiper)
+	} else if packet.BlockChainRequest != nil {
+		blockchainRequestHandler(packet, gossiper)
 	} else {
 		if gossiper.debug {
 			fmt.Println("__________Unexpected gossip packet type.")
@@ -1697,6 +1702,10 @@ func (gossiper *Gossiper) processStrayBlocks() {
 
 func (gossiper *Gossiper) txChannelListener(wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	<-time.After(10 * time.Second)
+	//gossiper.bootstrapBlockchain = true
+
 	isFirstMinedBlock := true
 
 outer:
