@@ -70,6 +70,19 @@ function sendPrivateMessageToServer(dest, text) {
     });
 }
 
+function sendSecurePrivateMessageToServer(dest, text) {
+    const message = {"encprivate": {"temp": text, "Destination": dest}};
+    $.ajax({
+        url: hostURL + "/message",
+        type: 'post',
+        contentType: 'application/json',
+        data: JSON.stringify(message),
+        error: function (jqXhr, textStatus, errorThrown) {
+            console.log(errorThrown);
+        }
+    });
+}
+
 function sendGossipMessageToServer(text) {
     const rumour = {"Rumor": {"Text": text}};
 
@@ -140,6 +153,7 @@ function renderKnownNodes() {
             $('.active').removeClass('active');
             $(this).toggleClass('active');
             $('#private-msg-btn').removeAttr('disabled');
+            $('#secure-private-msg-btn').removeAttr('disabled');
             $('#file-download-btn').removeAttr('disabled');
         });
 
@@ -225,6 +239,15 @@ function onClickPrivateMessageSend () {
     const text = textArea.val();
     sendPrivateMessageToServer(dest, text);
     $("#pm-modal").modal("hide");
+    textArea.val('');
+}
+
+function onClickSecureMessageSend () {
+    const dest = $(".active")[0].text;
+    const textArea = $("#send-secure-pm-txtarea");
+    const text = textArea.val();
+    sendSecurePrivateMessageToServer(dest, text);
+    $("#secure-pm-modal").modal("hide");
     textArea.val('');
 }
 
