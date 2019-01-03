@@ -100,6 +100,7 @@ func NewGossiper(name string, address string, peers []string, uiPort string, sim
 	fileMetaMap := make(map[string][]byte)
 	fileReplicateAwaitMap := make(map[string]func(ack FileReplicateAck))
 	fileReplicatedTargetsMap := make(map[string][]string)
+	fileStreamableSrcMap := make(map[string]string)
 	keyMap := make(map[string]*rsa.PublicKey)
 	// Jobs channel length did not seem to exceed 10 items even at high loads.
 	// Hence a value of 20 is given keeping a buffer.
@@ -155,6 +156,7 @@ func NewGossiper(name string, address string, peers []string, uiPort string, sim
 		lowerLeafSet:             lowerLeafSet,
 		fileReplicateAwaitMap:    fileReplicateAwaitMap,
 		fileReplicatedTargetsMap: fileReplicatedTargetsMap,
+		fileStreamableSrcMap:     fileStreamableSrcMap,
 		keyMap:                   keyMap,
 		blockchainBootstrap:      false,
 	}

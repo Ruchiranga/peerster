@@ -1,3 +1,4 @@
 *.out
 Peerster
 .DS_Store
+.idea/

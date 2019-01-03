@@ -296,16 +296,18 @@ function onClickSearchFile () {
     const cb = function(fileNames) {
         $('#search-results-list').html('');
         const lines = fileNames.split('\n');
+        console.log(lines);
         lines.forEach(function (line) {
             if (line !== "") {
                 const splits = line.split(',');
                 const fileName = splits[0];
                 const hash = splits[1];
+                const origin = splits[2];
                 keywords.split(',').forEach(function (keyword) {
                     const regex = new RegExp('^.*' + escapeRegExp(keyword) + '.*$', 'g');
                     if (fileName.match(regex)) {
                         $('#search-results-list')
-                            .append(`<button type="button" class="list-group-item" data-metahash="${hash}" ondblclick="onClickSearchDownload(this)">${fileName}</button>`)
+                            .append(`<button type="button" class="list-group-item" data-metahash="${hash}" ondblclick="onClickSearchDownload(this)">${fileName}${origin ? `<span class="play-button" class="list-group-item" data-metahash="${hash}" data-filename="${fileName}" data-origin="${origin}" onclick="onClickStream(this)">▶</span>` : ''}</button>`);
                     } else {
                         console.log(`Received result ${fileName} doesn't match the keywords`)
                     }
@@ -360,6 +362,17 @@ function onClickSearchDownload (element) {
             $('#download-status-alert').alert('close')
         }, 3000)
     });
+}
+
+function onClickStream(element) {
+    const fileName = element.dataset.filename;
+    const origin = element.dataset.origin;
+    const nameWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
+    $('#player-container').show();
+    $('#player-name').html(nameWithoutExtension);
+    let player = document.getElementById("audio-player");
+    player.src = origin;
+    player.play();
 }
 
 $(function() {
