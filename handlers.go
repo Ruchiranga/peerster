@@ -663,19 +663,27 @@ func getSearchHandlerKeys(searchAwaitMap map[string]func(reply SearchReply), fil
 func txPublishHandler(packet GossipPacket, gossiper *Gossiper) {
 	receivedTx := packet.TxPublish
 
+	fmt.Println("Received txpub from:", receivedTx.Announcement.Record.Owner)
+
 	gossiper.blockChainEventLoop <- func() {
-		for _, tx := range gossiper.publishedTxs {
-			if tx.File.Name == receivedTx.File.Name {
+		if receivedTx.Announcement != nil {
+			if !receivedTx.Announcement.Verify() {
+				fmt.Println("INVALID ANNOUNCEMENT")
+				return
+			}
+		} else {
+			for _, tx := range gossiper.publishedTxs {
+				if tx.File.Name == receivedTx.File.Name {
+					return
+				}
+			}
+
+			_, found := gossiper.fileMetaMap[receivedTx.File.Name]
+
+			if found {
 				return
 			}
 		}
-
-		_, found := gossiper.fileMetaMap[receivedTx.File.Name]
-
-		if found {
-			return
-		}
-
 		gossiper.txChannel <- *receivedTx
 
 		packet.TxPublish.HopLimit -= 1

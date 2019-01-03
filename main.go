@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rsa"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -14,7 +15,7 @@ var NodeIDLength int
 var Verbose bool
 
 func main() {
-	Verbose = false
+	Verbose = true
 	NodeIDLength = 8
 
 	DEBUG := false
@@ -52,6 +53,7 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(6)
 
+	gossiper.initKey(gossiper.Name + "-" + DefaultKeyFileName)
 	go gossiper.initializePastry()
 	go gossiper.executeJobs(&wg)
 	go gossiper.executeBlockChainJobs(&wg)
@@ -63,6 +65,9 @@ func main() {
 		wg.Add(1)
 		go gossiper.announceRoutes(&wg)
 	}
+
+	go gossiper.txPublishMyKey(gossiper.key, gossiper.Name)
+
 	wg.Wait()
 }
 
@@ -92,6 +97,7 @@ func NewGossiper(name string, address string, peers []string, uiPort string, sim
 	fileMetaMap := make(map[string][]byte)
 	fileReplicateAwaitMap := make(map[string]func(ack FileReplicateAck))
 	fileReplicatedTargetsMap := make(map[string][]string)
+	keyMap := make(map[string]*rsa.PublicKey)
 	// Jobs channel length did not seem to exceed 10 items even at high loads.
 	// Hence a value of 20 is given keeping a buffer.
 	jobsChannel := make(chan func(), 20)
@@ -146,5 +152,6 @@ func NewGossiper(name string, address string, peers []string, uiPort string, sim
 		lowerLeafSet:             lowerLeafSet,
 		fileReplicateAwaitMap:    fileReplicateAwaitMap,
 		fileReplicatedTargetsMap: fileReplicatedTargetsMap,
+		keyMap:                   keyMap,
 	}
 }
