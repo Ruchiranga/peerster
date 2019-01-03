@@ -1493,7 +1493,7 @@ func (gossiper *Gossiper) getFilteredPublishedTx(block Block) (filtered []TxPubl
 outer:
 	for _, publishedTx := range gossiper.publishedTxs {
 		for _, receivedTx := range block.Transactions {
-			if ann := receivedTx.Announcement; ann != nil {
+			if ann := receivedTx.Announcement; ann != nil && publishedTx.Announcement != nil {
 				if publishedTx.Announcement.Equal(ann) {
 					fmt.Println("FILTERED")
 					continue outer
@@ -1721,7 +1721,7 @@ outer:
 	for {
 		tx := <-gossiper.txChannel
 		for _, existingTx := range gossiper.publishedTxs {
-			if tx.Announcement != nil {
+			if tx.Announcement != nil && existingTx.Announcement != nil {
 				if existingTx.Announcement.Equal(tx.Announcement) {
 					fmt.Println("TX CHANNEL")
 					continue outer

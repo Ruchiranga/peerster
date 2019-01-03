@@ -186,10 +186,12 @@ func (t *TxPublish) Hash() (out [32]byte) {
 	h.Write([]byte(t.File.Name))
 	h.Write(t.File.MetafileHash)
 
-	binary.Write(h, binary.LittleEndian, uint32(len(t.Announcement.Record.Owner)))
-	h.Write([]byte(t.Announcement.Record.Owner))
-	h.Write(t.Announcement.Record.PubKey)
-	h.Write(t.Announcement.Signature)
+	if (t.Announcement != nil) {
+		binary.Write(h, binary.LittleEndian, uint32(len(t.Announcement.Record.Owner)))
+		h.Write([]byte(t.Announcement.Record.Owner))
+		h.Write(t.Announcement.Record.PubKey)
+		h.Write(t.Announcement.Signature)
+	}
 
 	copy(out[:], h.Sum(nil))
 	return
