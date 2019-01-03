@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"github.com/dedis/protobuf"
 	"os"
+	"time"
 )
 
 const KeySize = 2048
@@ -328,6 +329,7 @@ func (gossiper *Gossiper) forwardBlockchainReply(bcRep *BlockChainReply) {
 		packet := GossipPacket{BlockChainReply: bcRep}
 		gossiper.writeToAddr(packet, address)
 	} else {
+		fmt.Printf("__________Failed to forward blockchain reply. Next hop for %s not found.\n", bcRep.Destination)
 		if gossiper.debug {
 			fmt.Printf("__________Failed to forward blockchain reply. Next hop for %s not found.\n", bcRep.Destination)
 		}
@@ -340,6 +342,8 @@ func blockchainReplyHandler(packet GossipPacket, gossiper *Gossiper) {
 	fmt.Println("RECEIVED BLOCKCHAIN REPLY")
 
 	if bcRep.Destination == gossiper.Name && !gossiper.blockchainBootstrap {
+		gossiper.blockchainBootstrap = true
+
 		gossiper.fileMetaMap = make(map[string][]byte)
 		gossiper.keyMap = make(map[string]*rsa.PublicKey)
 
@@ -361,6 +365,8 @@ func blockchainReplyHandler(packet GossipPacket, gossiper *Gossiper) {
 }
 
 func (gossiper *Gossiper) bootstrapBlockchain() {
+	<-time.After(5 * time.Second)
+
 	packet := GossipPacket{
 		BlockChainRequest: &BlockChainRequest{
 			Origin: gossiper.Name,

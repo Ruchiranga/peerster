@@ -15,15 +15,18 @@ sleep 20
 
 ./peerster -UIPort=12001 -gossipAddr=127.0.0.1:5001 -peers=127.0.0.1:5000 -name=B -rtimer=$v > peersterB.out &
 
-sleep 12
+sleep 10
 
+./client/client -UIPort=12001 -msg=test -dest=A -secure
+
+sleep 5
 
 pkill -f peerster
 rm *.key
 
 T=FAILURE
 
-if (grep -q "FOUND KEY FROM BOOTSTRAP A" "peersterB.out"); then
+if (grep -q "FOUND KEY FROM BOOTSTRAP A" "peersterB.out") && (grep -q "ENC PRIVATE origin B hop-limit 10 contents test" "peersterA.out"); then
 	T=SUCCESS
 fi
 
