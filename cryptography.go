@@ -341,9 +341,8 @@ func blockchainReplyHandler(packet GossipPacket, gossiper *Gossiper) {
 
 	fmt.Println("RECEIVED BLOCKCHAIN REPLY")
 
-	if bcRep.Destination == gossiper.Name && !gossiper.blockchainBootstrap {
+	if bcRep.Destination == gossiper.Name && !gossiper.blockchainBootstrap && len(bcRep.Blockchain) > 0 {
 		gossiper.blockchainBootstrap = true
-
 		gossiper.fileMetaMap = make(map[string][]byte)
 		gossiper.keyMap = make(map[string]*rsa.PublicKey)
 
