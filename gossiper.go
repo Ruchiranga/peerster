@@ -273,12 +273,16 @@ func (gossiper *Gossiper) initiateFileDownload(metaHashHex string, fileName stri
 				if replyPtr != nil {
 					// To be able to be served to another peer
 					gossiper.fileContentMap[metaHashHex] = replyPtr.Data
+					transcodedPath := ""
+					if replyPtr.StreamableSrc != "" {
+						transcodedPath = fmt.Sprintf("http://%s:%s/streaming/%s.mp3", gossiper.gossipAddress.IP.String(), gossiper.uiPort, strings.TrimSuffix(fileName, filepath.Ext(fileName)))
+					}
 					gossiper.fileList = append(gossiper.fileList, FileIndex{
 						Name:          fileName,
 						Size:          0, // TODO set the file size once the download is done
 						MetaFile:      replyPtr.Data,
 						MetaHash:      metaHash,
-						StreamableSrc: replyPtr.StreamableSrc,
+						StreamableSrc: transcodedPath,
 					})
 					gossiper.requestFileChunk(metaHashHex, replyPtr.Data, 0, fileName, dest, done)
 					return
@@ -304,6 +308,10 @@ func (gossiper *Gossiper) requestFile(metaHashHex string, destination string, sa
 		if success {
 			content := gossiper.currentDownloads[metaHashHex]
 			writeToFile(content, saveAs)
+			transcodedPath := gossiper.transcodeStreamableFile(saveAs)
+			if transcodedPath != "" {
+				gossiper.fileStreamableSrcMap[metaHashHex] = transcodedPath
+			}
 			printFileReconstructLog(saveAs)
 			delete(gossiper.currentDownloads, metaHashHex)
 		} else {
@@ -984,8 +992,8 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	mux := http.NewServeMux()
 	fileServer := http.FileServer(http.Dir("./client/static"))
 
-	mux.Handle("/streaming/", http.StripPrefix("/streaming/", http.FileServer(http.Dir("./_SharedFiles/Streaming/"))))
-	mux.Handle("/", fileServer)
+	mux.Handle("/streaming/", corsHandler(http.StripPrefix("/streaming/", http.FileServer(http.Dir("./_SharedFiles/Streaming/")))))
+	mux.Handle("/", corsHandler(fileServer))
 	mux.Handle("/message", messageHandler)
 	mux.Handle("/node", nodeHandler)
 	mux.Handle("/id", idHandler)
@@ -1001,6 +1009,47 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func corsHandler(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var origin, method, headers string
+
+		origin = r.Header.Get("Origin")
+
+		if r.Method == "OPTIONS" {
+			method = r.Header.Get("Access-Control-Request-Method")
+			headers = r.Header.Get("Access-Control-Request-Headers")
+
+			if len(origin) == 0 || len(method) == 0 {
+				msg := fmt.Sprintf("%d %s: missing required CORS headers",
+					http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
+				http.Error(w, msg, http.StatusBadRequest)
+				return;
+			}
+		}
+
+		if len(origin) > 0 {
+			w.Header().Add("Vary", "Origin")
+			w.Header().Add("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Access-Control-Allow-Credentials", "true")
+			w.Header().Add("Access-Control-Expose-Headers", "Accept-Ranges,Content-Range,Content-Type,Authorization,Content-Length,Vary")
+		}
+
+		if len(method) > 0 {
+			w.Header().Add("Vary", "Access-Control-Request-Method")
+			w.Header().Add("Access-Control-Allow-Methods", method)
+		}
+
+		if len(headers) > 0 {
+			w.Header().Add("Vary", "Access-Control-Request-Headers")
+			w.Header().Add("Access-Control-Allow-Headers", headers)
+		}
+
+		if r.Method != "OPTIONS" {
+			handler.ServeHTTP(w, r)
+		}
+	})
 }
 
 func isTotalMatch(fileChunks map[uint64][]string, expectedCount uint64) (isMatch bool) {
@@ -1205,7 +1254,9 @@ func (gossiper *Gossiper) indexFile(fileName string) (success bool) {
 	metaHashHex := hex.EncodeToString(metaHash[:])
 	gossiper.fileContentMap[metaHashHex] = metaFile
 	transcodedPath := gossiper.transcodeStreamableFile(fileName)
-	gossiper.fileStreamableSrcMap[metaHashHex] = transcodedPath
+	if transcodedPath != "" {
+		gossiper.fileStreamableSrcMap[metaHashHex] = transcodedPath
+	}
 
 	gossiper.fileList = append(gossiper.fileList, FileIndex{
 		Name:          fileName,

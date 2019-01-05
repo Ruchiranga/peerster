@@ -307,7 +307,7 @@ function onClickSearchFile () {
                     const regex = new RegExp('^.*' + escapeRegExp(keyword) + '.*$', 'g');
                     if (fileName.match(regex)) {
                         $('#search-results-list')
-                            .append(`<button type="button" class="list-group-item" data-metahash="${hash}" ondblclick="onClickSearchDownload(this)">${fileName}${origin ? `<span class="play-button" class="list-group-item" data-metahash="${hash}" data-filename="${fileName}" data-origin="${origin}" onclick="onClickStream(this)">▶</span>` : ''}</button>`);
+                            .append(`<button type="button" class="list-group-item" data-metahash="${hash}" ondblclick="onClickSearchDownload(this)">${fileName}${origin ? `<span class="play-button" class="list-group-item" data-metahash="${hash}" data-filename="${fileName}" data-origin="${origin}" ondblclick="event.stopPropagation()" onclick="onClickStream(this)">▶</span>` : ''}</button>`);
                     } else {
                         console.log(`Received result ${fileName} doesn't match the keywords`)
                     }
@@ -364,15 +364,96 @@ function onClickSearchDownload (element) {
     });
 }
 
-function onClickStream(element) {
-    const fileName = element.dataset.filename;
-    const origin = element.dataset.origin;
-    const nameWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
+function onClickStream(element, b, c, d) {
+    const fileName = element.dataset.filename,
+        mimeType = 'audio/mpeg',
+        assetURL = element.dataset.origin,
+        segmentSize = 1024 * 1024, // 1 MB
+        nameWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
     $('#player-container').show();
     $('#player-name').html(nameWithoutExtension);
-    let player = document.getElementById("audio-player");
-    player.src = origin;
-    player.play();
+    let player = document.getElementById("audio-player"),
+        lastFetched = 0,
+        fileSize = 0,
+        segmentsList = [],
+        sourceBuffer = null,
+        mediaSource = null;
+
+    if ('MediaSource' in window && MediaSource.isTypeSupported(mimeType)) {
+        mediaSource = new MediaSource;
+        player.src = URL.createObjectURL(mediaSource);
+        mediaSource.addEventListener('sourceopen', onSourceOpen);
+    } else {
+        console.error('Unsupported MIME type or codec: ', mimeType);
+    }
+    // player.src = origin;
+    // player.play();
+
+    function onSourceOpen() {
+        sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+        getFileLength(assetURL, function (fileLength) {
+            fileSize = fileLength;
+            console.log("size: ", fileLength);
+            console.log((fileSize / 1024 / 1024).toFixed(2), 'MB');
+            let auxByte = 0,
+                numberOfSegments = Math.ceil(fileSize / segmentSize);
+            for (let i = 0; i < numberOfSegments; i++) {
+                segmentsList[i] = {
+                    start: auxByte,
+                    end: i === numberOfSegments - 1 ? auxByte + fileSize % segmentSize - 1 : auxByte + segmentSize - 1,
+                };
+                auxByte += segmentSize;
+            }
+            console.log(segmentsList);
+            fetchRange(assetURL, segmentsList[lastFetched].start, segmentsList[lastFetched].end);
+            player.addEventListener('canplay', function () {
+                player.play();
+            });
+            player.onloadedmetadata = function () {
+                console.log('onlodademetadata:', player.duration);
+            };
+        });
+    }
+
+
+     function getFileLength(url, cb) {
+        var xhr = new XMLHttpRequest;
+        xhr.open('head', url);
+        xhr.onload = function () {
+            cb(xhr.getResponseHeader('Content-Length'));
+        };
+        xhr.send();
+    }
+
+    function fetchRange(url, start, end) {
+        let xhr = new XMLHttpRequest;
+        xhr.open('get', url);
+        xhr.responseType = 'arraybuffer';
+        xhr.setRequestHeader('Range', 'bytes=' + start + '-' + end);
+        xhr.setRequestHeader('Accept', '*/*');
+        xhr.onload = function () {
+            console.log('Fetched range: ', start, end);
+            try {
+                sourceBuffer.appendBuffer(xhr.response);
+            }
+            catch(err) {
+                console.log("Stream no longer valid");
+                return;
+            }
+            lastFetched++;
+            if (lastFetched < segmentsList.length) {
+                const sleep = (milliseconds) => {
+                    return new Promise(resolve => setTimeout(resolve, milliseconds))
+                };
+                sleep(1000).then(() => {
+                    if (segmentsList[lastFetched]) {
+                        fetchRange(url, segmentsList[lastFetched].start, segmentsList[lastFetched].end);
+                    }
+                });
+            }
+        };
+        xhr.send();
+    }
 }
 
 $(function() {

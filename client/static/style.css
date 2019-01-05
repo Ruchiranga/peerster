@@ -86,3 +86,7 @@ form {
 #player-container {
     display: none;
 }
+
+#audio-player {
+    width: 100%;
+}
