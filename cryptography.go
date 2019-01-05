@@ -247,7 +247,7 @@ func (gossiper *Gossiper) txPublishMyKey(privKey *rsa.PrivateKey, name string) {
 	f := func() {
 		if _, ok := gossiper.keyMap[name]; !ok {
 			if ann, err := NewPKIAnnouncement(privKey, &privKey.PublicKey, name); err == nil {
-				txPub := TxPublish{Announcement: ann, HopLimit: 10}
+				txPub := TxPublish{Announcement: ann, HopLimit: 3}
 				gossiper.txChannel <- txPub
 				gossiper.broadcast(GossipPacket{TxPublish: &txPub})
 				fmt.Println("SENDING TXPUBLISH")

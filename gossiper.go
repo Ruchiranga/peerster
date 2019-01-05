@@ -1028,7 +1028,7 @@ func corsHandler(handler http.Handler) http.Handler {
 				msg := fmt.Sprintf("%d %s: missing required CORS headers",
 					http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 				http.Error(w, msg, http.StatusBadRequest)
-				return;
+				return
 			}
 		}
 
@@ -1575,7 +1575,7 @@ func (gossiper *Gossiper) appendBlock(block Block) {
 		if ann := tx.Announcement; ann != nil {
 			if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
 				gossiper.keyMap[ann.Record.Owner] = key
-				fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), gossiper.keyMap)
+				fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), len(gossiper.keyMap), gossiper.keyMap)
 			}
 
 		} else {
@@ -1659,7 +1659,7 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 								if ann := tx.Announcement; ann != nil {
 									if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
 										gossiper.keyMap[ann.Record.Owner] = key
-										fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), gossiper.keyMap)
+										fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), len(gossiper.keyMap), gossiper.keyMap)
 									}
 								} else {
 									gossiper.fileMetaMap[tx.File.Name] = tx.File.MetafileHash
