@@ -665,8 +665,8 @@ func getSearchHandlerKeys(searchAwaitMap map[string]func(reply SearchReply), fil
 func txPublishHandler(packet GossipPacket, gossiper *Gossiper) {
 	receivedTx := packet.TxPublish
 
-	if (receivedTx.Announcement != nil) {
-		fmt.Println("Received txpub from:", receivedTx.Announcement.Record.Owner)
+	if receivedTx.Announcement != nil {
+		//fmt.Println("Received txpub from:", receivedTx.Announcement.Record.Owner)
 	}
 
 	gossiper.blockChainEventLoop <- func() {

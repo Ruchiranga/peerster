@@ -104,7 +104,7 @@ func NewGossiper(name string, address string, peers []string, uiPort string, sim
 	keyMap := make(map[string]*rsa.PublicKey)
 	// Jobs channel length did not seem to exceed 10 items even at high loads.
 	// Hence a value of 20 is given keeping a buffer.
-	jobsChannel := make(chan func(), 20)
+	jobsChannel := make(chan func(), 100)
 	blockChainEventLoop := make(chan func(), 100)
 	txChannel := make(chan TxPublish, 1000)
 	var forks [][]Block

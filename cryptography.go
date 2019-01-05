@@ -196,12 +196,14 @@ func DecodePublicKey(encoded []byte) (*rsa.PublicKey, error) {
 func NewEncPrivateMsg(origin string, text string, dest string, originPrivK *rsa.PrivateKey, destPubK *rsa.PublicKey) (*EncPrivateMessage, error) {
 	enc, err := Encrypt(destPubK, []byte(text))
 	if err != nil {
+		fmt.Println("ERR NewEncPrivateMsg 1")
 		return nil, err
 	}
 
 	content := append(enc, []byte(origin+dest)...)
 	sig, err := Sign(originPrivK, content)
 	if err != nil {
+		fmt.Println("ERR NewEncPrivateMsg 2")
 		return nil, err
 	}
 
@@ -210,7 +212,7 @@ func NewEncPrivateMsg(origin string, text string, dest string, originPrivK *rsa.
 		ID:          0,
 		EncText:     enc,
 		Destination: dest,
-		HopLimit:    10,
+		HopLimit:    20,
 		Signature:   sig,
 	}
 
@@ -242,10 +244,26 @@ func (gossiper *Gossiper) initKey(path string) {
 }
 
 func (gossiper *Gossiper) txPublishMyKey(privKey *rsa.PrivateKey, name string) {
-	if ann, err := NewPKIAnnouncement(privKey, &privKey.PublicKey, name); err == nil {
-		txPub := TxPublish{Announcement: ann, HopLimit: 1}
-		gossiper.txChannel <- txPub
-		gossiper.broadcast(GossipPacket{TxPublish: &txPub})
+	f := func() {
+		if _, ok := gossiper.keyMap[name]; !ok {
+			if ann, err := NewPKIAnnouncement(privKey, &privKey.PublicKey, name); err == nil {
+				txPub := TxPublish{Announcement: ann, HopLimit: 10}
+				gossiper.txChannel <- txPub
+				gossiper.broadcast(GossipPacket{TxPublish: &txPub})
+				fmt.Println("SENDING TXPUBLISH")
+			}
+		}
+	}
+
+	f()
+
+	tickChan := time.NewTicker(time.Second * 10).C
+
+	for {
+		select {
+		case <-tickChan:
+			f()
+		}
 	}
 }
 
@@ -255,16 +273,18 @@ func (announcement *PKIAnnoucement) Equal(other *PKIAnnoucement) bool {
 
 func encPrivateHandler(packet GossipPacket, gossiper *Gossiper) {
 	epm := packet.EncPrivate
+	fmt.Println("RECEIVED ENC PRIVATE")
 	if epm.Destination == gossiper.Name {
 
 		originPubK, ok := gossiper.keyMap[epm.Origin]
 		if !ok {
+			fmt.Println("ERR origin pub key not found")
 			return
 		}
 
 		text, err := epm.VerifyAndDecrypt(originPubK, gossiper.key)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("ERR", err)
 			return
 		}
 
@@ -286,9 +306,11 @@ func (gossiper *Gossiper) forwardEncPrivateMessage(encPrivate *EncPrivateMessage
 	if found {
 		packet := GossipPacket{EncPrivate: encPrivate}
 		gossiper.writeToAddr(packet, address)
+		fmt.Println("FORWARDING ENC MSG TO", address)
 	} else {
+		fmt.Printf("__________Failed to forward encrypted private message. Next hop for %s not found.\n", encPrivate.Destination)
 		if gossiper.debug {
-			fmt.Printf("__________Failed to forward private message. Next hop for %s not found.\n", encPrivate.Destination)
+			fmt.Printf("__________Failed to forward encrypted private message. Next hop for %s not found.\n", encPrivate.Destination)
 		}
 	}
 }

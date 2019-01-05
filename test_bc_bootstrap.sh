@@ -26,7 +26,7 @@ rm *.key
 
 T=FAILURE
 
-if (grep -q "FOUND KEY FROM BOOTSTRAP A" "peersterB.out") && (grep -q "ENC PRIVATE origin B hop-limit 10 contents test" "peersterA.out"); then
+if (grep -q "FOUND KEY FROM BOOTSTRAP A" "peersterB.out") && (grep -q "ENC PRIVATE origin B.*contents test" "peersterA.out"); then
 	T=SUCCESS
 fi
 

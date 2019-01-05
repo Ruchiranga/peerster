@@ -12,7 +12,7 @@ rm *.out
 ./peerster -UIPort=12000 -gossipAddr=127.0.0.1:5000 -name=A -peers=127.0.0.1:5001 -rtimer=$v > peersterA.out &
 ./peerster -UIPort=12001 -gossipAddr=127.0.0.1:5001 -name=B -peers=127.0.0.1:5000 -rtimer=$v > peersterB.out &
 
-sleep 5
+sleep 20
 
 ./client/client -UIPort=12000 -msg=test -dest=B -secure
 

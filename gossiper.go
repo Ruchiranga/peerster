@@ -803,14 +803,17 @@ func (gossiper *Gossiper) listenUi(wg *sync.WaitGroup) {
 							packet.EncPrivate, err = NewEncPrivateMsg(gossiper.Name, packet.EncPrivate.Temp, dest, gossiper.key, destKey)
 							if err != nil {
 								if gossiper.debug {
-									fmt.Println(err)
+									fmt.Println("ERR", err)
 								}
 							}
 
 							nextHop, found := gossiper.routingTable[packet.EncPrivate.Destination]
 							if found {
 								gossiper.writeToAddr(packet, nextHop)
+								fmt.Println("SENDING ENC PRIVATE")
 							} else {
+								fmt.Printf("Could not forward client private message %s. "+
+									"Next hop for %s not found\n", packet.Private.Text, packet.Private.Destination)
 								if gossiper.debug {
 									fmt.Printf("Could not forward client private message %s. "+
 										"Next hop for %s not found\n", packet.Private.Text, packet.Private.Destination)
@@ -1425,7 +1428,10 @@ func (gossiper *Gossiper) writeToAddr(packet GossipPacket, address string) {
 		panic(err)
 	}
 
-	gossiper.gossipConn.WriteToUDP(packetBytes, destinationAddress)
+	_, err = gossiper.gossipConn.WriteToUDP(packetBytes, destinationAddress)
+	if err != nil {
+		fmt.Println("UDP ERR:", err)
+	}
 }
 
 func (gossiper *Gossiper) broadcast(packet GossipPacket) {
@@ -1569,7 +1575,7 @@ func (gossiper *Gossiper) appendBlock(block Block) {
 		if ann := tx.Announcement; ann != nil {
 			if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
 				gossiper.keyMap[ann.Record.Owner] = key
-				fmt.Println("FOUND KEY " + ann.Record.Owner + " " + hex.EncodeToString(ann.Record.PubKey))
+				fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), gossiper.keyMap)
 			}
 
 		} else {
@@ -1638,6 +1644,11 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 							for _, tx := range castOff.Transactions {
 								if ann := tx.Announcement; ann != nil {
 									delete(gossiper.keyMap, ann.Record.Owner)
+
+									tx := TxPublish{
+										Announcement: ann,
+									}
+									gossiper.publishedTxs = append(gossiper.publishedTxs, tx)
 								} else {
 									delete(gossiper.fileMetaMap, tx.File.Name)
 								}
@@ -1648,7 +1659,7 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 								if ann := tx.Announcement; ann != nil {
 									if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
 										gossiper.keyMap[ann.Record.Owner] = key
-										fmt.Println("FOUND KEY " + ann.Record.Owner + " " + hex.EncodeToString(ann.Record.PubKey))
+										fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), gossiper.keyMap)
 									}
 								} else {
 									gossiper.fileMetaMap[tx.File.Name] = tx.File.MetafileHash
@@ -1774,7 +1785,7 @@ outer:
 		for _, existingTx := range gossiper.publishedTxs {
 			if tx.Announcement != nil && existingTx.Announcement != nil {
 				if existingTx.Announcement.Equal(tx.Announcement) {
-					fmt.Println("TX CHANNEL")
+					//fmt.Println("TX CHANNEL")
 					continue outer
 				}
 			} else if existingTx.File.Name == tx.File.Name {
@@ -1808,7 +1819,7 @@ outer:
 						block := Block{PrevHash: prevBlockHash, Nonce: nonce, Transactions: gossiper.publishedTxs}
 						if isValidBlock(block) {
 							miningEndTimeMillis := time.Now().UnixNano() / 1000000
-							mineTime := miningEndTimeMillis - miningStartTimeMillis
+							mineTime := miningEndTimeMillis - miningStartTimeMillis + 1
 
 							printSuccessfulMineLog(block.Hash())
 							gossiper.runBlockChainJobSync(func() {
