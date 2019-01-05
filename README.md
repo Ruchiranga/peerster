@@ -1,10 +1,15 @@
-# Peerster
+# Peer to Peer Audio Streaming Application based on Peerster
+
+Aims to create a decentralized audio streaming application by building on the current implementation of Peerster.
+Allows users to save storage by streaming files on demand instead of downloading them.
+User privacy ensured with cryptographic tools.
+A decentralized storage mechanism is used to ensure efficient packet streaming
 
 ### Prerequisites
 
 There are two prerequisites, FFmpeg and LAME MP3 Encoder, the instructions to install them are below:
 
-#### Installing FFmpeg for transcoding audio files
+##### Installing FFmpeg for transcoding audio files
 ###### For Windows
 
 * Download the compiled binaries from https://ffmpeg.zeranoe.com/builds/win64/static/ffmpeg-20190104-5faa1b8-win64-static.zip
@@ -33,7 +38,7 @@ brew install ffmpeg --with-tools
 sudo apt-get install ffmpeg
 ```
 
-#### Installing LAME MP3 Encoder as the library for encoding to the mp3 format
+##### Installing LAME MP3 Encoder as the library for encoding to the mp3 format
 ###### For Windows
 
 * Download the following file and install it: https://lame.buanzo.org/Lame_v3.99.3_for_Windows.exe
