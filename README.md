@@ -58,14 +58,17 @@ sudo apt-get install lame
 
 * Navigate to `src/github.com/Ruchiranga/Peerster`
 * Execute `go build`
-* Execute `./Peerster -gossipAddr=... -peers=... -name=... -UIPort=...` along with the relevant arguments\
-(Eg:- `./Peerster -gossipAddr=127.0.0.1:5000 -peers=127.0.0.1:5001,127.0.0.1:5002 -name=jon_snow -UIPort=8080`)
+* Execute `./Peerster -gossipAddr=... -peers=... -UIPort=... -rtimer=...` along with the relevant arguments\
+(Eg:- `./Peerster -gossipAddr=127.0.0.1:5000 -peers=127.0.0.1:5001,127.0.0.1:5002 -UIPort=8080 -rtimer=5`)
 * Open the web browser and access `http://localhost:8080/` (or whatever the UI port specified when running the server) 
 to use the node's web client
 
 ##### Note
 
-It is assumed that the `go build` and `./Peerster` commands are executed being in `/src/github.com/Ruchiranga/Peerster` 
+Please note that the `-name` parameter is not passed in when running `./Peerster` command since it now generates a name on its own to 
+support decentralized storage functionality.
+
+It is also assumed that the `go build` and `./Peerster` commands are executed being in `/src/github.com/Ruchiranga/Peerster` 
 since the paths to the static web content are specified relative to that directory. If the commands are executed while 
 being in a different location, web client will not work.
 
@@ -78,9 +81,6 @@ being in a different location, web client will not work.
 - **gossipAddr** string
 	ip:port for the gossiper (default "127.0.0.1:5000")
 	
-- **name** string
-	Name of the gossiper
-
 - **peers** string
 	Comma separated list of peers of the form ip:port
 
