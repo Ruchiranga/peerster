@@ -90,6 +90,9 @@ being in a different location, web client will not work.
 - **simple** boolean
 	Run Gossiper in simple broadcast mode (default false)
 
+- **secure** boolean
+    Sends an encrypted private message (given that private message flags are enabled as well) instead of a regular private message (default false)
+
 ### Running tests
 
 By default `client/main.go` has `simpleMode := false` set so that `test_2_ring.sh` can be run straight away. Before 
