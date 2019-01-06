@@ -68,6 +68,10 @@ to use the node's web client
 Please note that the `-name` parameter is not passed in when running `./Peerster` command since it now generates a name on its own to 
 support decentralized storage functionality.
 
+It is also assumed that the Peerster nodes are not instantiated all at once and that they are started one after the other
+with a small delay in between (like 5 seconds) so as to leave some time for the nodes to collect the state inforormation
+required for the PASTRY based routing scheme. 
+
 It is also assumed that the `go build` and `./Peerster` commands are executed being in `/src/github.com/Ruchiranga/Peerster` 
 since the paths to the static web content are specified relative to that directory. If the commands are executed while 
 being in a different location, web client will not work.
@@ -105,6 +109,5 @@ Sending a secure private message on the GUI is done by clicking on the `Send PM`
 
 ### Running tests
 
-By default `client/main.go` has `simpleMode := false` set so that `test_2_ring.sh` can be run straight away. Before 
-running `test_1_ring.sh` please make sure `simpleMode := true` is set in `client/main.go` main function. For other test
-files this change shouldn't be necessary.
+The `test_random_network.sh` script creates a random network of a specified size. The peer address ports start from 5000
+and the UI ports start from 50000. This script was used in making the demo video.
