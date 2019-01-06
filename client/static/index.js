@@ -368,7 +368,7 @@ function onClickStream(element, b, c, d) {
     const fileName = element.dataset.filename,
         mimeType = 'audio/mpeg',
         assetURL = element.dataset.origin,
-        segmentSize = 1024 * 1024, // 1 MB
+        numberOfSegments = 5,
         nameWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
     $('#player-container').show();
     $('#player-name').html(nameWithoutExtension);
@@ -396,11 +396,11 @@ function onClickStream(element, b, c, d) {
             console.log("size: ", fileLength);
             console.log((fileSize / 1024 / 1024).toFixed(2), 'MB');
             let auxByte = 0,
-                numberOfSegments = Math.ceil(fileSize / segmentSize);
+                segmentSize = Math.ceil(fileSize / numberOfSegments);
             for (let i = 0; i < numberOfSegments; i++) {
                 segmentsList[i] = {
                     start: auxByte,
-                    end: i === numberOfSegments - 1 ? auxByte + fileSize % segmentSize - 1 : auxByte + segmentSize - 1,
+                    end: i === numberOfSegments - 1 ? fileSize - 1 : auxByte + segmentSize - 1,
                 };
                 auxByte += segmentSize;
             }
