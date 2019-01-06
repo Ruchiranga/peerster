@@ -29,11 +29,11 @@ do
         peerCount="$(python rand.py 4)"
 
         liveListLimit=$((${#LiveList[@]}-1))
-        actualLimit=10
-        if [ $liveListLimit -lt 10 ]
-        then
-        actualLimit=$liveListLimit
-        fi
+#        actualLimit=10
+#        if [ $liveListLimit -lt 10 ]
+#        then
+#        actualLimit=$liveListLimit
+#        fi
 
         # Let every node have one random neighbour out of all live nodes
 #        randFirstIndex=$(jot -r 1 0 "${liveListLimit}")
@@ -42,7 +42,7 @@ do
         peersString=${LiveList[$randFirstIndex]}
         for j in $(seq 1 $peerCount);
         do
-        # All the rest of neighbours will be from 5000 - 5010
+        # Let every node have one random neighbour out of all live nodes
 #        randIndex=$(jot -r 1 0 "${liveListLimit}")
         randIndex="$(python rand.py "${liveListLimit}")"
         address=${LiveList[$randIndex]}
