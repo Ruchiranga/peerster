@@ -1879,9 +1879,9 @@ func (gossiper *Gossiper) transcodeStreamableFile(fileName string) string {
 	args := []string{"-y", "-i", path, "-error-resilient", "1", "-codec:a", "libmp3lame", "-b:a", "128k", outputPath}
 	_, err := exec.Command(cmd, args...).Output()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "File is not transcodable: ", err)
+		fmt.Println("File is not transcodable")
 		return ""
 	}
-	fmt.Println("ENCODING SUCCEEDED")
+	fmt.Println("TRANSCODING SUCCEEDED")
 	return fmt.Sprintf("http://%s:%s/streaming/%s.mp3", gossiper.gossipAddress.IP.String(), gossiper.uiPort, nameWithoutExtension)
 }
