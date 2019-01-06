@@ -55,7 +55,7 @@ do
 
 
 	gossipAddr="127.0.0.1:$gossipPort"
-	./Peerster -UIPort=$UIPort -gossipAddr=$gossipAddr -rtimer=5 -peers=$peersString > "logs/$outFileName" &
+	./peerster -UIPort=$UIPort -gossipAddr=$gossipAddr -rtimer=5 -peers=$peersString > "logs/$outFileName" &
 	LiveList+=(${gossipAddr})
 	UIPort=$(($UIPort+1))
 	gossipPort=$(($gossipPort+1))
