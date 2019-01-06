@@ -90,8 +90,18 @@ being in a different location, web client will not work.
 - **simple** boolean
 	Run Gossiper in simple broadcast mode (default false)
 
-- **secure** boolean
-    Sends an encrypted private message (given that private message flags are enabled as well) instead of a regular private message (default false)
+##### Secure private message
+The secure private message feature is available on the CLI and GUI. In both cases, a user should wait some time when joining the network before sending secure private message, this is to make sure its key gets on the blockchain and that it sees the keys from other nodes.
+
+###### CLI: 
+Sending a secure private message on the CLI is similar to sending a regular private message, the only difference is the presence of an additional `secure` flag:
+`./client -UIPort=<UIPort> -msg=<content> -dest=<Destination name> -secure`
+
+For example:
+`./client -UIPort=12000 -msg=hello -dest=Bob -secure`
+
+###### GUI:
+Sending a secure private message on the GUI is done by clicking on the `Send PM` button.
 
 ### Running tests
 
