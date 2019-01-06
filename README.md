@@ -90,7 +90,7 @@ being in a different location, web client will not work.
 - **simple** boolean
 	Run Gossiper in simple broadcast mode (default false)
 
-##### Secure private message
+### Secure private message
 The secure private message feature is available on the CLI and GUI. In both cases, a user should wait some time when joining the network before sending secure private message, this is to make sure its key gets on the blockchain and that it sees the keys from other nodes.
 
 ###### CLI: 
