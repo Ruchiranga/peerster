@@ -178,7 +178,7 @@ func printReplicationCompleteLog(targets []string) {
 func (gossiper *Gossiper) printPastryState() {
 	//if Verbose {
 	fmt.Println("--------------------------------------------------------------------------------------------------")
-	fmt.Printf("NEIGHBOURS %v\nROUTING TABLE %v\nLARGER LEAF SET %v\nSMALLER LEAF SET %v\n", gossiper.neighbours,
+	fmt.Printf("ROUTING TABLE %v\nLARGER LEAF SET %v\nSMALLER LEAF SET %v\n",
 		gossiper.pastryRoutingTable, gossiper.upperLeafSet, gossiper.lowerLeafSet)
 	fmt.Println("--------------------------------------------------------------------------------------------------")
 	//}
