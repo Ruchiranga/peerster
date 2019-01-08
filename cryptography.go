@@ -294,10 +294,17 @@ func encPrivateHandler(packet GossipPacket, gossiper *Gossiper) {
 		gossiper.storeMessage(genericMessage)
 
 	} else {
+		str := "Received secure private message to forward" + "\n" +
+			"Origin: " + epm.Origin + "\n" +
+			"Destination: " + epm.Destination + "\n" +
+			"Content: " + hex.EncodeToString(epm.EncText) + "\n\n"
+		OpenAndWriteString(gossiper.MaliciousLog, str)
+
 		epm.HopLimit -= 1
 		if epm.HopLimit > 0 {
 			gossiper.forwardEncPrivateMessage(epm)
 		}
+
 	}
 }
 
@@ -375,7 +382,15 @@ func blockchainReplyHandler(packet GossipPacket, gossiper *Gossiper) {
 				if ann := tx.Announcement; ann != nil {
 					if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
 						gossiper.keyMap[ann.Record.Owner] = key
-						fmt.Println("FOUND KEY FROM BOOTSTRAP " + ann.Record.Owner + " " + hex.EncodeToString(ann.Record.PubKey))
+						//fmt.Println("FOUND KEY FROM BOOTSTRAP " + ann.Record.Owner + " " + hex.EncodeToString(ann.Record.PubKey))
+						owners := make([]string, 0)
+						for keys := range gossiper.keyMap {
+							owners = append(owners, keys)
+						}
+						str := "Found key of " + ann.Record.Owner + " from bootstrap" + "\n" + "Current blockchain has " + fmt.Sprint(len(gossiper.keyMap)) + " keys: " + fmt.Sprint(owners) + "\n"
+						OpenAndWriteString(gossiper.BlockChainLog, str)
+						//fmt.Println("Found key of", ann.Record.Owner, "from bootstrap")
+						//fmt.Println("Current blockchain has", len(gossiper.keyMap), " keys:", owners)
 					}
 				} else {
 					gossiper.fileMetaMap[tx.File.Name] = tx.File.MetafileHash

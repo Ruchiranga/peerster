@@ -61,6 +61,8 @@ type Gossiper struct {
 	key                      *rsa.PrivateKey
 	keyMap                   map[string]*rsa.PublicKey
 	blockchainBootstrap      bool
+	BlockChainLog            string
+	MaliciousLog             string
 }
 
 type FileIndex struct {
@@ -1575,7 +1577,15 @@ func (gossiper *Gossiper) appendBlock(block Block) {
 		if ann := tx.Announcement; ann != nil {
 			if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
 				gossiper.keyMap[ann.Record.Owner] = key
-				fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), len(gossiper.keyMap), gossiper.keyMap)
+				//fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), len(gossiper.keyMap), gossiper.keyMap)
+				owners := make([]string, 0)
+				for keys := range gossiper.keyMap {
+					owners = append(owners, keys)
+				}
+				str := "Found key of " + ann.Record.Owner + "\n" + "Current blockchain has " + fmt.Sprint(len(gossiper.keyMap)) + " keys: " + fmt.Sprint(owners) + "\n"
+				OpenAndWriteString(gossiper.BlockChainLog, str)
+				//fmt.Println("Found key of " + ann.Record.Owner)
+				//fmt.Println("Current blockchain has", len(gossiper.keyMap), " keys:", owners)
 			}
 
 		} else {
@@ -1659,7 +1669,15 @@ func (gossiper *Gossiper) processBlock(receivedBlock Block) (success bool) {
 								if ann := tx.Announcement; ann != nil {
 									if key, err := DecodePublicKey(ann.Record.PubKey); err == nil && ann.Verify() {
 										gossiper.keyMap[ann.Record.Owner] = key
-										fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), len(gossiper.keyMap), gossiper.keyMap)
+										//fmt.Println("FOUND KEY "+ann.Record.Owner+" "+hex.EncodeToString(ann.Record.PubKey), len(gossiper.keyMap), gossiper.keyMap)
+										owners := make([]string, 0)
+										for keys := range gossiper.keyMap {
+											owners = append(owners, keys)
+										}
+										str := "Found key of " + ann.Record.Owner + "\n" + "Current blockchain has " + fmt.Sprint(len(gossiper.keyMap)) + " keys: " + fmt.Sprint(owners) + "\n"
+										OpenAndWriteString(gossiper.BlockChainLog, str)
+										//fmt.Println("Found key of " + ann.Record.Owner)
+										//fmt.Println("Current blockchain has", len(gossiper.keyMap), " keys:", owners)
 									}
 								} else {
 									gossiper.fileMetaMap[tx.File.Name] = tx.File.MetafileHash

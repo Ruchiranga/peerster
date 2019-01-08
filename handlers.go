@@ -609,10 +609,17 @@ func privateHandler(packet GossipPacket, gossiper *Gossiper) {
 		genericMessage := getGenericMessageFromPrivate(*packet.Private)
 		gossiper.storeMessage(genericMessage)
 	} else {
+		str := "Received private message to forward" + "\n" +
+			"Origin: " + packet.Private.Origin + "\n" +
+			"Destination: " + packet.Private.Destination + "\n" +
+			"Content: " + packet.Private.Text + "\n\n"
+		OpenAndWriteString(gossiper.MaliciousLog, str)
+
 		packet.Private.HopLimit -= 1
 		if packet.Private.HopLimit > 0 {
 			gossiper.forwardPrivateMessage(packet.Private)
 		}
+
 	}
 }
 

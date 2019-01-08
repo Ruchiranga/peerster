@@ -124,6 +124,16 @@ func NewGossiper(name string, address string, peers []string, uiPort string, sim
 	upperLeafSet := make([]Peer, 0, 4)
 	lowerLeafSet := make([]Peer, 0, 4)
 
+	blockchainLog, err := createBlockchainLog(name)
+	if err != nil {
+		fmt.Println("Create blockchain log:", err)
+	}
+
+	maliciousLog, err := createMaliciousLog(name)
+	if err != nil {
+		fmt.Println("Create malicious log:", err)
+	}
+
 	return &Gossiper{
 		jobsChannel:              jobsChannel,
 		gossipAddress:            udpAddr,
@@ -159,5 +169,7 @@ func NewGossiper(name string, address string, peers []string, uiPort string, sim
 		fileStreamableSrcMap:     fileStreamableSrcMap,
 		keyMap:                   keyMap,
 		blockchainBootstrap:      false,
+		BlockChainLog:            blockchainLog,
+		MaliciousLog:             maliciousLog,
 	}
 }
